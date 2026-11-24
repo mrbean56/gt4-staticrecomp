@@ -3504,5 +3504,9 @@ read path.
   frame comparison matches, owner test. Normal installs keep the linked image (decision 0075).
 - Licensing: the extracted folder is the owner's own data. It is never committed, never put in an installer and never
   published; the repository ships only the extraction tooling and the overlay.
+- State (2026-11-24): the extraction half is done — `scripts/gt4_disc_extract.py` writes the pinned disc as a folder
+  (136 files, 2,675,322,996 B, half the image) and verifies the three ISO pins plus the `GT4.VOL` extent
+  (`49f1a67a…`); seven controls in `tests/python/test_gt4_disc_extract.py`. The runtime overlay is not started: it needs
+  the Windows build.
 - Unknown: whether anything reads raw sectors (CDDA, subchannel) that a folder cannot serve; effort is not measured, and
   every visible result needs the Windows build.
