@@ -3486,10 +3486,17 @@ the port document; the dirt and mountain ones come after the tarmac.
 
 ### TASK-219 — Larger starting field (📋 Planned, study, mod)
 
-The owner asked for GT3's "more cars per race". GT3 ran six-car grids, the same as GT4, so this is a new mod under
-decision 0073, not a port: grid slots, opponent spawn, the HUD position list, replays and memory all assume six.
-Study first (where the field size is decided, what breaks at eight), then one bounded experiment in Arcade, off by
-default and identical to the reference when off.
+Owner request (2026-11-24): every six-car race becomes a 24-car race. GT3 ran six-car grids too, so this is a new mod
+under decision 0073, not a port. The field size is not one setting: the event opponent lists, the course grid slots,
+the HUD position board, replays, results and the AI/physics/render/audio budgets all assume six, and the EE cannot grow
+its 32 MB.
+- Study first, in this order: where six is enforced (event data, course start slots, ELF fixed arrays and the position
+  board), then a measured budget on the reference scene (what one additional opponent costs in EE time and RAM at
+  60 Hz).
+- Then eight cars in one Arcade race, off by default and identical to the reference when off. 24 only if that
+  measurement supports it; on the original engine four times the actors is a race-system rewrite, and the owner is told
+  the measured ceiling before any work goes further.
+- Acceptance for each step: race clock identical, simulation state identical for the six reference cars, owner test.
 
 ### TASK-220 — Run from an extracted disc folder instead of the ISO (📋 Planned, native)
 
@@ -3510,3 +3517,15 @@ read path.
   the Windows build.
 - Unknown: whether anything reads raw sectors (CDDA, subchannel) that a folder cannot serve; effort is not measured, and
   every visible result needs the Windows build.
+
+### TASK-221 — Setup takes both discs and converts locally (📋 Planned, after 217/218)
+
+Owner decision (2026-11-24): the player supplies the GT4 image and the GT3 image at setup, and the port loads GT3
+content into GT4 from the player's own discs. Depends on TASK-217 (car models) and TASK-218 (courses); it makes them
+usable and is where the licensing question disappears.
+- Setup accepts the GT4 image (pinned by serial and ELF) and, optionally, the GT3 image (PBPX-955.03 lineage,
+  identified by its own pins), extracts both (`scripts/gt4_disc_extract.py` covers GT4), runs the conversion once, and
+  writes the converted rows and models into the player's local game data. Nothing converted leaves the machine.
+- A player without a GT3 image gets the reference game; the conversion is skipped, not faked.
+- Gates: conversion is deterministic (same two images give the same output hashes), the reference game is untouched
+  when conversion is skipped, and every converted car or circuit passes the pipeline that produced it.

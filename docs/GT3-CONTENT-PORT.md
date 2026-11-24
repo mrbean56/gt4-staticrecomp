@@ -60,6 +60,19 @@ GT3 has no feature GT4 lacks: both run six-car grids and the same camera set. Th
 not to the GT3 disc. What is worth having in this port is already planned or is a mod:
 TASK-159 (360° chase camera), TASK-160 (FoV), and a larger field (TASK-219).
 
+## Two discs at setup (owner, 2026-11-24)
+
+Setup takes the player's GT4 image and their GT3 image. Everything GT3 supplies is read and
+converted **on the player's own machine** into that player's GT4 data: car rows from GT3's own
+`paramdb` (power, torque curve, weight, gearbox, dimensions, drivetrain, tire sizes — the same
+columns GT4 stores), and geometry converted from GT3's model containers into GT4's serialized
+form. Nothing converted is shipped, and a player without a GT3 image runs the reference game.
+
+That removes the distribution problem completely, but it does not remove the hard part: the
+recompiled game executes GT4's own code, which builds per-car VIF packets for GT4's VU1
+microcode, and GT3's models were authored for GT3's engine. A GT3 car has to arrive in GT4's
+serialized model form before GT4 can draw it, wherever the conversion runs.
+
 ## The four pipelines
 
 Content enters GT4Recomp only through GT4's own data files, so each pipeline has the
@@ -140,9 +153,9 @@ reference behaviour intact when off.
 
 ## Licensing and distribution
 
-Nothing from GT3 is redistributed. Ports are built at install time from the player's
-own GT3 disc, as GT3-revisited does and as decision 0069 already requires for GT4.
-The repository ships tooling and the conversion code, never GT3 assets.
+Nothing from GT3 is redistributed. Ports are built at setup time from the player's own
+GT3 disc, as GT3-revisited does and as decision 0069 already requires for GT4. The
+repository ships tooling and the conversion code, never assets from either disc.
 
 ## Unknowns that decide the schedule
 
