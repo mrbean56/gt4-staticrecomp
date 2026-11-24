@@ -68,6 +68,28 @@ converted **on the player's own machine** into that player's GT4 data: car rows 
 columns GT4 stores), and geometry converted from GT3's model containers into GT4's serialized
 form. Nothing converted is shipped, and a player without a GT3 image runs the reference game.
 
+### What a GT4 car is, exactly
+
+Every per-car row carries the car's code in its label, so a car is a **closed label set**, not a
+row in one table. `scripts/gt4_car_map.py` enumerates it, and two unrelated cars agree on the
+shape (Confirmed on the owner's disc, 2026-11-24):
+
+| Group | Rows | Example |
+|---|---|---|
+| the car itself | 20 | `ka_01` in `GENERIC_CAR`, `CAR_NAME_*` (9 languages), `CAR_VARIATION_*` (9), `ARCADEINFO_NORMAL` |
+| its own data, one row per letter | 62 | `ch_ka_01_a` (CHASSIS, one), `en_…` (ENGINE, one), `ge_…_a..d` (GEAR, four), `su_…_a..d`, `ft_…_a..m` (FRONTTIRE, thirteen), `rt_…` (REARTIRE, thirteen), `br_…`, `cl_…`, `fw_…`, `ls_…`, `mu_…`, `nt_…`, `lw_…`, `eb_…`, `co_…`, `bc_…`, `rm_…`, `no_…`, `pp_…`, `tk_…` |
+| class and event scoped | 13 | `pr_compact_ka_01` (DEFAULT_PARAM), `pt_compact_ka_01` (DEFAULT_PARTS), `gt4r_compact_ka_01` (ENEMY_CARS) |
+
+95 rows in 44 tables for `ka_01`, the same 95/44 for `m3_04`. The label prefixes are consistent
+(`ch_` chassis, `en_` engine, `ge_` gear, `ft_`/`rt_` tyres, `pr_`/`pt_` class defaults, `gt4r_`
+event entries), so **adding a trim car is a label clone**: copy a donor car's 82 car-owned rows
+under the new code, append them with new row ids, and copy the 13 class/event rows only if the
+new car belongs to the same class and events.
+
+Two format facts the clone depends on (Confirmed): the row tables are searched by row id, so a
+new row takes an id above that table's maximum and the row infos stay ascending; the label tables
+are in shipped car order, not sorted, so their new keys go at the end.
+
 That removes the distribution problem completely, but it does not remove the hard part: the
 recompiled game executes GT4's own code, which builds per-car VIF packets for GT4's VU1
 microcode, and GT3's models were authored for GT3's engine. A GT3 car has to arrive in GT4's

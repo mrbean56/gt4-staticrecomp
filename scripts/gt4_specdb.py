@@ -77,6 +77,8 @@ class Dictionary:
     codes: list[Code]
     by_code: dict[tuple[int, int], int]
     max_bits: int
+    shortest_bits: int = 9
+    end: int = 0
 
 
 @dataclass(frozen=True)
@@ -97,17 +99,19 @@ def _read_dictionary(data: bytes, offset: int) -> Dictionary | None:
     if offset + 8 > len(data):
         return None
     size, count = struct.unpack_from("<II", data, offset)
-    if not 1 <= count <= MAX_CODES:
+    if not 0 <= count <= MAX_CODES:
         return None
-    if size != DICTIONARY_FIXED_SIZE + count * CODE_DEFINITION_SIZE:
-        return None
-    end = offset + size
+    if count == 0:
+        # An empty table declares the full dictionary size but stores only the header.
+        if size != DICTIONARY_FIXED_SIZE:
+            return None
+        end = offset + 8
+    else:
+        if size != DICTIONARY_FIXED_SIZE + count * CODE_DEFINITION_SIZE:
+            return None
+        end = offset + size
     if end > len(data):
         return None
-    prefix = [
-        (data[offset + 8 + index * 2], data[offset + 9 + index * 2])
-        for index in range(256)
-    ]
     codes = []
     for index in range(count):
         bits, symbol, _, code = struct.unpack_from(
@@ -121,17 +125,27 @@ def _read_dictionary(data: bytes, offset: int) -> Dictionary | None:
     kraft = sum(2.0**-code.bits for code in codes)
     if kraft > 1.0 + 1e-9:
         return None
-    by_pair = {(code.bits, code.symbol): code.code for code in codes}
-    for index, (symbol, bits) in enumerate(prefix):
-        if not bits:
-            continue
-        if bits > 8:
-            return None
-        code = by_pair.get((bits, symbol))
-        if code is None or (index & ((1 << bits) - 1)) != code:
-            return None
+    prefix = None
+    if count:
+        prefix = [
+            (data[offset + 8 + index * 2], data[offset + 9 + index * 2])
+            for index in range(256)
+        ]
+        by_pair = {(code.bits, code.symbol): code.code for code in codes}
+        for index, (symbol, bits) in enumerate(prefix):
+            if not bits:
+                continue
+            if bits > 8:
+                prefix = None
+                break
+            code = by_pair.get((bits, symbol))
+            if code is None or (index & ((1 << bits) - 1)) != code:
+                prefix = None
+                break
     by_code = {(code.bits, code.code): code.symbol for code in codes}
-    return Dictionary(prefix, codes, by_code, max(code.bits for code in codes))
+    shortest = min((code.bits for code in codes), default=1) if prefix is None else 9
+    return Dictionary(prefix or [], codes, by_code,
+                      max((code.bits for code in codes), default=1), shortest, end)
 
 
 def _read_block(
@@ -140,7 +154,7 @@ def _read_block(
     if offset + BLOCK_HEADER_SIZE > len(data):
         return None
     size, count = struct.unpack_from("<II", data, offset)
-    if not 1 <= count <= MAX_BLOCK_ROWS:
+    if not 0 <= count <= MAX_BLOCK_ROWS:
         return None
     if size != BLOCK_HEADER_SIZE + count * row_length:
         return None
@@ -169,11 +183,12 @@ def _peek_bits(data: bytes, bit_offset: int, count: int) -> int:
 def _decode_symbol(
     data: bytes, bit_offset: int, end_bit: int, dictionary: Dictionary
 ) -> tuple[int, int]:
-    symbol, bits = dictionary.prefix[_peek_bits(data, bit_offset, 8)]
-    if bits:
-        require(bit_offset + bits <= end_bit, "GTDB truncated Huffman code")
-        return symbol, bits
-    for length in range(9, dictionary.max_bits + 1):
+    if dictionary.prefix:
+        symbol, bits = dictionary.prefix[_peek_bits(data, bit_offset, 8)]
+        if bits:
+            require(bit_offset + bits <= end_bit, "GTDB truncated Huffman code")
+            return symbol, bits
+    for length in range(dictionary.shortest_bits, dictionary.max_bits + 1):
         symbol = dictionary.by_code.get(
             (length, _peek_bits(data, bit_offset, length))
         )
@@ -200,11 +215,16 @@ def _decode_row(
         symbol, bits = _decode_symbol(data, bit_offset, end_bit, dictionary)
         symbols.append(symbol)
         bit_offset += bits
-    if count == 1:
-        require(symbols[0] < len(block_rows), "GTDB row copy index out of range")
-        return block_rows[symbols[0]]
     header = symbols[0]
-    require(header & 0x80 and not header & 0x40, "GTDB row patch header is invalid")
+    kind = header >> 6
+    if kind == 0:
+        require(count == 1, "GTDB row copy carries trailing symbols")
+        require(header < len(block_rows), "GTDB row copy index out of range")
+        return block_rows[header]
+    require(kind != 3, "GTDB row type 3 is not supported")
+    if kind == 1:
+        require(len(symbols) == 1 + row_length, "GTDB raw row length mismatch")
+        return bytes(symbols[1 : 1 + row_length])
     template = header & 0x3F
     require(template < len(block_rows), "GTDB row template index out of range")
     mask_length = (row_length + 7) // 8
@@ -255,7 +275,7 @@ def parse_table(data: bytes) -> Table:
     require(len(data) >= HEADER_SIZE, "GTDB header is truncated")
     require(data[:4] == GTDB_MAGIC, "GTDB magic mismatch")
     version, row_count, row_length = struct.unpack_from("<III", data, 4)
-    require(0 < row_count <= MAX_ROWS, "GTDB row count out of range")
+    require(0 <= row_count <= MAX_ROWS, "GTDB row count out of range")
     require(0 < row_length <= MAX_ROW_LENGTH, "GTDB row length out of range")
     require(
         HEADER_SIZE + row_count * ROW_INFO_SIZE <= len(data),
@@ -268,13 +288,7 @@ def parse_table(data: bytes) -> Table:
     rows_start = HEADER_SIZE + row_count * ROW_INFO_SIZE
     dictionary = _read_dictionary(data, rows_start)
     if dictionary is not None:
-        block = _read_block(
-            data,
-            rows_start
-            + DICTIONARY_FIXED_SIZE
-            + len(dictionary.codes) * CODE_DEFINITION_SIZE,
-            row_length,
-        )
+        block = _read_block(data, dictionary.end, row_length)
         if block is not None:
             block_rows, stream_start = block
             return _parse_compressed(
@@ -303,7 +317,7 @@ def write_table(table: Table, compressed: bool = False) -> bytes:
     """Write the raw uncompressed form (version | 0x01) and return its bytes."""
     require(not compressed, "GTDB compressed writing is not supported")
     require(table.row_count == len(table.rows), "GTDB row count mismatch")
-    require(0 < table.row_count <= MAX_ROWS, "GTDB row count out of range")
+    require(0 <= table.row_count <= MAX_ROWS, "GTDB row count out of range")
     require(0 < table.row_length <= MAX_ROW_LENGTH, "GTDB row length out of range")
     for row in table.rows:
         require(len(row.data) == table.row_length, "GTDB row length mismatch")
@@ -311,6 +325,10 @@ def write_table(table: Table, compressed: bool = False) -> bytes:
         "<4sIII", GTDB_MAGIC, table.version | VERSION_UNCOMPRESSED,
         table.row_count, table.row_length,
     )
+    if not table.rows:
+        # Shipped empty tables carry an empty dictionary header and an empty block header.
+        return header + struct.pack("<II", DICTIONARY_FIXED_SIZE, 0) \
+            + struct.pack("<II", BLOCK_HEADER_SIZE, 0)
     infos = b"".join(
         struct.pack("<II", row.row_id, index * table.row_length)
         for index, row in enumerate(table.rows)
@@ -323,7 +341,7 @@ def parse_labels(data: bytes) -> LabelTable:
     require(len(data) >= HEADER_SIZE, "GTID header is truncated")
     require(data[:4] == GTID_MAGIC, "GTID magic mismatch")
     count, _, table_id = struct.unpack_from("<III", data, 4)
-    require(0 < count <= MAX_ROWS, "GTID key count out of range")
+    require(0 <= count <= MAX_ROWS, "GTID key count out of range")
     names_start = HEADER_SIZE + count * 8
     require(names_start <= len(data), "GTID key table exceeds file")
     labels = []

@@ -209,6 +209,36 @@ class TableTests(unittest.TestCase):
             specdb.parse_table(specdb.write_table(table)[:-1])
 
 
+class DegenerateTableTests(unittest.TestCase):
+    """Shipped tables that carry no code variety and the empty table."""
+
+    def test_empty_table_is_header_plus_two_empty_headers(self):
+        data = (struct.pack("<4sIII", b"GTDB", 0x00080001, 0, 65)
+                + struct.pack("<II", 520, 0) + struct.pack("<II", 8, 0))
+        table = specdb.parse_table(data)
+        self.assertEqual((table.row_count, table.row_length, table.rows), (0, 65, []))
+        self.assertEqual(specdb.write_table(table), data)
+
+    def test_single_symbol_dictionary_ignores_a_stale_prefix_table(self):
+        row_length = 3
+        template = b"\x2a\x00\x01"
+        header = struct.pack("<4sIII", b"GTDB", 0x00080001, 3, row_length)
+        infos = b"".join(struct.pack("<II", 100 + index, index * 2) for index in range(3))
+        # A 1-code dictionary ships a prefix table that does not describe its code list.
+        prefix = b"\x00\x01\x00\xff" * 128
+        definition = struct.pack("<BBHI", 1, 0, 0, 0)
+        dictionary = struct.pack("<II", 8 + 512 + 8, 1) + prefix + definition
+        block = struct.pack("<II", 8 + row_length, 1) + template
+        stream = b"\x01\x00" * 3
+        table = specdb.parse_table(header + infos + dictionary + block + stream)
+        self.assertEqual([row.data for row in table.rows], [template] * 3)
+        self.assertEqual([row.row_id for row in table.rows], [100, 101, 102])
+        self.assertEqual(
+            [row.data for row in specdb.parse_table(specdb.write_table(table)).rows],
+            [template] * 3,
+        )
+
+
 class LabelTests(unittest.TestCase):
     def test_gtid_names_and_alignment(self):
         data = gtid(39, [("ka_01", 59), ("m3_0", 653), ("x", 865)])
@@ -282,3 +312,31 @@ class RealDiscTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+ISO = Path(os.environ.get("GT4_ISO", ""))
+
+
+@unittest.skipUnless(ISO.is_file(), "set GT4_ISO to the pinned USA v2.00 image")
+class EveryTableTests(unittest.TestCase):
+    def test_all_79_shipped_tables_parse_and_round_trip(self):
+        import gt4_volume
+
+        with gt4_volume.verified_volume(ISO) as stream:
+            catalogue = gt4_volume.read_catalogue(stream)
+            paths = sorted(path for path in catalogue.files
+                           if path.startswith("specdb/GT4_US2560/")
+                           and path.endswith(".dbt"))
+            self.assertEqual(len(paths), 79)
+            for path in paths:
+                record = catalogue.files[path]
+                raw = gt4_volume.read_at(
+                    stream, gt4_volume.VOLUME_OFFSET + record.offset, record.stored_size,
+                    gt4_volume.VOLUME_OFFSET + gt4_volume.VOLUME_SIZE)
+                data = gt4_volume.decode_payload(raw, record.kind, record.size)
+                table = specdb.parse_table(data)
+                again = specdb.parse_table(specdb.write_table(table))
+                self.assertEqual([row.data for row in table.rows],
+                                 [row.data for row in again.rows], path)
+                self.assertEqual([row.row_id for row in table.rows],
+                                 [row.row_id for row in again.rows], path)
