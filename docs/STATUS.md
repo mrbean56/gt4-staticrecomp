@@ -1,5 +1,18 @@
 # Current Status
 
+## Larger starting field: the data half is built (2026-11-24)
+
+TASK-219 groundwork. A race's field size is one byte of its `RACE` SpecDB row (`MaxEntries` at 0x3E: 6 for 537
+races, 2 for 86, 1 for 85, 4 for one), and the opponent pool is a candidate list rather than the grid — 196 six-car
+races ship fewer than six candidates, so the engine already repeats to fill the field. `scripts/gt4_field_size.py`
+raises every six to a requested size and re-serializes the table; `tests/python/test_gt4_field_size.py` holds nine
+controls. Built from the owner's disc, `~/opencode/gt4/gt4-field24.iso` (SHA-256 `60e7ca91…`) differs from the source
+only in `RACE.dbt`: 18,351 other entries are byte-identical at unmoved offsets and every byte outside `GT4.VOL` is
+identical. The reconstructed retail ELF also exists offline now (`scripts/gt4_core_elf.py`, text SHA-1 `28422e7e…`).
+Open: the boot test (the same unproven uncompressed-table path as `gt4-rebuilt.iso`), and the six-wide loops in
+`RaceDisplayLapDiffEvent`, `RaceTraining`, `RaceMonitor__setState` and `RaceChampionshipInformation` that the mod still
+has to settle — `docs/GT4-LARGER-FIELD.md`.
+
 ## 1.3.0-rc14: closing as a pre-release (2026-11-04, afternoon)
 
 On top of the slice407 test build: the full trigger range on by default with a fixed-width meter (TASK-161), the shader

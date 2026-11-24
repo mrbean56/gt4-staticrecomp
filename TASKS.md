@@ -3506,6 +3506,12 @@ its 32 MB.
   built through virtual calls (`RaceEntryBase__virtual_01` → `RaceEntryCar__structor_0` → `RaceEntryInformation`), so
   the list is dynamic. Hypothesis: the six is enforced by the starting grid, the position board, the results table and
   the replay buffer, not by the opponent list — which is the part the mod has to rebuild.
+- Data half implemented (2026-11-24): the field size is one byte of the `RACE` row, `MaxEntries` at 0x3E (6 for 537
+  races, 2 for 86, 1 for 85, 4 for one), and the opponent pool is only a candidate list — 196 six-car races ship fewer
+  than six candidates, so the engine repeats to fill the field. `scripts/gt4_field_size.py` raises every six to a
+  target and leaves the rest alone; nine controls in `tests/python/test_gt4_field_size.py`. Image
+  `~/opencode/gt4/gt4-field24.iso` (SHA-256 `60e7ca91…`): only `RACE.dbt` differs, 18,351 other entries byte-identical,
+  every byte outside `GT4.VOL` identical. Findings and the open code sites: `docs/GT4-LARGER-FIELD.md`.
 - Then eight cars in one Arcade race, off by default and identical to the reference when off. 24 only if that
   measurement supports it; on the original engine four times the actors is a race-system rewrite, and the owner is told
   the measured ceiling before any work goes further.
