@@ -3491,8 +3491,15 @@ under decision 0073, not a port. The field size is not one setting: the event op
 the HUD position board, replays, results and the AI/physics/render/audio budgets all assume six, and the EE cannot grow
 its 32 MB.
 - Study first, in this order: where six is enforced (event data, course start slots, ELF fixed arrays and the position
-  board), then a measured budget on the reference scene (what one additional opponent costs in EE time and RAM at
-  60 Hz).
+  board), then a measured budget on the reference scene (what one additional opponent costs in guest RAM at 60 Hz —
+  host compute is not the limit).
+- State (2026-11-24): the offline input exists now. `scripts/gt4_core_elf.py` rebuilds the retail `SCUS_973.28.elf`
+  from `CORE.GT4` (plain `[u16 0x0101][u32 size][deflate]` container, not the beta's encrypted one) and verifies the
+  pinned text SHA-1 `28422e7e…`; seven controls in `tests/python/test_gt4_core_elf.py`, and the ISO and folder paths
+  give the same 6,124,412-byte image. A first pass with the public gt4-decomp symbol list finds 82 race-named functions
+  holding an immediate 6, with `slti …, 6` bounds checks in `RaceEntryInformation`, `RaceMonitor`, `RaceMiniMap`,
+  `RaceDisplayLapDiffEvent` and `RaceTraining` (candidates, Hypothesis: R5900 decoding needs the project's own
+  translator before any of them is called the field limit).
 - Then eight cars in one Arcade race, off by default and identical to the reference when off. 24 only if that
   measurement supports it; on the original engine four times the actors is a race-system rewrite, and the owner is told
   the measured ceiling before any work goes further.
