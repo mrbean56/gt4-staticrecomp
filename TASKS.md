@@ -3447,6 +3447,20 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   at an existing model code: Mitsubishi Lancer Evolution VI GSR T.M.E. on the Evolution VI GSR body is the first
   candidate. It is the cheapest experiment that answers whether the menus and the save system enumerate cars from
   the SpecDB at runtime (Unknown today).
+- Reader and writer state (2026-11-24): all **79** shipped tables now parse and round-trip, not four. Four
+  degenerate shapes were refusing before: an empty table (0 rows, dictionary and block headers only), three
+  single-symbol tables whose 512-byte prefix table does not describe their one-code list (`DISPLACEMENT`, `WHEEL`,
+  `WING`), and label tables with zero keys. All 79 label tables are now **byte-identical** through the new
+  `write_labels`. Controls: `tests/python/test_gt4_specdb.py` (18 tests, one walking every table).
+- What a car is (2026-11-24): a closed label set, not one row. `scripts/gt4_car_map.py` resolves it: 95 rows in 44
+  tables for `ka_01`, the same 95/44 for `m3_04` — 20 identity rows (`GENERIC_CAR`, `CAR_NAME_*` ×9,
+  `CAR_VARIATION_*` ×9, `ARCADEINFO_NORMAL`), 67 in 21 two-letter families (`ch_`, `en_`, `ge_`, `ft_`, `rt_`, …),
+  8 class/event rows in 3 tables (`pr_`, `pt_`, `df_`, `gt4r_`, `gt4sample_`). Row ids ascend in every row table
+  (the game binary-searches them), so a new row takes an id above the table's maximum; label tables are in shipped
+  car order and take new keys at the end.
+- Milestone A4 groundwork (2026-11-24): `scripts/gt4_car_clone.py` plans and applies a clone of a car's 87 car-owned
+  rows under a new code (41 tables), leaving the class and event rows alone, reusing the donor's strings so the
+  clone shows the donor's name. Six controls in `tests/python/test_gt4_car_clone.py`.
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,

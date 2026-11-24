@@ -1,5 +1,16 @@
 # Current Status
 
+## SpecDB: every table decodes, and a car is a label set (2026-11-24)
+
+TASK-216 groundwork. All 79 `GT4_US2560` tables parse and round-trip, and all 79 label tables are byte-identical
+through the new `write_labels`; four degenerate shipped shapes had been refused (an empty table, three
+single-symbol tables whose prefix table does not describe their code list, zero-key label tables). A GT4 car turned
+out to be a closed 95-row label set across 44 tables — `ka_01` and `m3_04` agree on 95/44 — with the car's code
+inside every label (`ch_ka_01_a`, `ft_ka_01_m`, …), so the port's car add is a label clone:
+`scripts/gt4_car_clone.py` plans and writes the 87 car-owned rows under a new code, `scripts/gt4_car_map.py`
+resolves any code, and `tests/python/test_gt4_car_map.py` plus `test_gt4_car_clone.py` hold 13 controls. Car rows
+are binary-searched by id, so clones append above each table's maximum; label tables follow shipped car order.
+
 ## Larger starting field: the data half is built (2026-11-24)
 
 TASK-219 groundwork. A race's field size is one byte of its `RACE` SpecDB row (`MaxEntries` at 0x3E: 6 for 537

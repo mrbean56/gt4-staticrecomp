@@ -88,11 +88,12 @@ class Label:
 
 
 class LabelTable(list):
-    """GTID labels with the table id attached."""
+    """GTID labels with the table id and header flag attached."""
 
-    def __init__(self, table_id: int, labels: list[Label]) -> None:
+    def __init__(self, table_id: int, labels: list[Label], flags: int = 0) -> None:
         super().__init__(labels)
         self.table_id = table_id
+        self.flags = flags
 
 
 def _read_dictionary(data: bytes, offset: int) -> Dictionary | None:
@@ -340,7 +341,7 @@ def parse_labels(data: bytes) -> LabelTable:
     """Parse a GTID label table (names and row ids) plus its table id."""
     require(len(data) >= HEADER_SIZE, "GTID header is truncated")
     require(data[:4] == GTID_MAGIC, "GTID magic mismatch")
-    count, _, table_id = struct.unpack_from("<III", data, 4)
+    count, flags, table_id = struct.unpack_from("<III", data, 4)
     require(0 <= count <= MAX_ROWS, "GTID key count out of range")
     names_start = HEADER_SIZE + count * 8
     require(names_start <= len(data), "GTID key table exceeds file")
@@ -357,7 +358,25 @@ def parse_labels(data: bytes) -> LabelTable:
         raw = data[position + 2 : position + 2 + length]
         require(raw[-1] == 0, "GTID name is not NUL-terminated")
         labels.append(Label(raw[:-1].decode("latin-1"), row_id))
-    return LabelTable(table_id, labels)
+    return LabelTable(table_id, labels, flags)
+
+
+def write_labels(labels: LabelTable) -> bytes:
+    """Write a GTID label table: keys in the given order, names NUL-terminated and even-aligned."""
+    count = len(labels)
+    require(0 <= count <= MAX_ROWS, "GTID key count out of range")
+    area = bytearray()
+    keys = []
+    for label in labels:
+        keys.append((len(area), label.row_id))
+        raw = label.name.encode("latin-1") + b"\x00"
+        require(1 <= len(raw) <= MAX_ROW_LENGTH, "GTID name length out of range")
+        area += struct.pack("<H", len(raw)) + raw
+        if len(area) % 2:
+            area += b"\x00"
+    header = struct.pack("<4sIII", GTID_MAGIC, count, labels.flags, labels.table_id)
+    key_bytes = b"".join(struct.pack("<II", offset, row_id) for offset, row_id in keys)
+    return header + key_bytes + bytes(area)
 
 
 def parse_strings(data: bytes) -> list[str]:

@@ -54,8 +54,8 @@ def _payload(stream, catalogue, filename: str) -> bytes:
     return gt4_volume.decode_payload(raw, record.kind, record.size)
 
 
-def read_specdb(iso_path: Path) -> dict[str, tuple[gt4_specdb.LabelTable, dict[int, bytes]]]:
-    """Return every GT4_US2560 table's labels and rows, keyed by table name."""
+def read_specdb(iso_path: Path) -> dict[str, tuple[gt4_specdb.LabelTable, gt4_specdb.Table]]:
+    """Return every labelled GT4_US2560 table, keyed by table name."""
     tables = {}
     with gt4_volume.rebuilt_volume(iso_path) as stream:
         catalogue = gt4_volume.read_catalogue(stream, pinned=False)
@@ -69,7 +69,7 @@ def read_specdb(iso_path: Path) -> dict[str, tuple[gt4_specdb.LabelTable, dict[i
         for name in sorted(names):
             labels = gt4_specdb.parse_labels(_payload(stream, catalogue, name + ".idi"))
             table = gt4_specdb.parse_table(_payload(stream, catalogue, name + ".dbt"))
-            tables[name] = (labels, {row.row_id: row.data for row in table.rows})
+            tables[name] = (labels, table)
     return tables
 
 
@@ -90,7 +90,8 @@ def classify(label: str, code: str) -> str:
 def car_rows(tables, code: str) -> dict[str, list[tuple[str, int, bytes]]]:
     """Return every row whose label names this car, grouped by table."""
     found = {}
-    for name, (labels, rows) in tables.items():
+    for name, (labels, table) in tables.items():
+        rows = {row.row_id: row.data for row in table.rows}
         hits = [(label.name, label.row_id, rows.get(label.row_id, b""))
                 for label in labels if code in label.name]
         if hits:
