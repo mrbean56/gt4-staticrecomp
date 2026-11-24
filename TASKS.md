@@ -3430,3 +3430,45 @@ compatibility pin (executable, target, disc, renderer, settings); a disposable d
 an uninterrupted run at the same guest boundary; a coordinated capture boundary (EE, VU and GS workers fenced, GPU work finished,
 in-flight card and disc I/O settled); a CoreGS 2.0 logical state independent of Vulkan handles (the external GS process separate
 or excluded); then the launcher's save and resume flow. Effort is not measured. Starts only on the owner's word after 1.3.0.
+
+### TASK-216 — GT4 SpecDB tooling and the first trim car (📋 Planned, Python only)
+
+First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 0077). Goal: read and write
+`specdb/GT4_US2560` offline, then add one car that reuses an existing GT4 body.
+- Read every `GT4_US2560` table (`GTDB` rows through the Huffman dictionary, `GTID` labels, `GTST` strings).
+  Oracle from slices 120/121: `ka_01` is row 59 with name index 84, `CAR_VARIATION` row 444 of table 42, model
+  index 1598 in `american_StrDB.sdb`.
+- Write a table back with the documented uncompressed flag (`version | 1`), reload it and compare every row, so no
+  Huffman *encoder* is ever needed.
+- Rebuild `GT4.VOL` with only that table changed and confirm every other entry is byte-identical.
+- Add one trim car of the target list to `GENERIC_CAR`, `CAR_NAME_american` and `CAR_VARIATION_american`, pointing
+  at an existing model code: Mitsubishi Lancer Evolution VI GSR T.M.E. on the Evolution VI GSR body is the first
+  candidate. It is the cheapest experiment that answers whether the menus and the save system enumerate cars from
+  the SpecDB at runtime (Unknown today).
+- Acceptance: Python fixtures for the reader, the round trip and a synthetic table; the real disc as an optional
+  input; owner test in game (the car appears in the dealer/garage and drives). No native rebuild.
+- Limits: a row-level car has its own specs but an existing body, paint set and wheels.
+
+### TASK-217 — GT4 car model write path and one converted car (📋 Planned, research)
+
+Second pipeline of the port. Slices 121–124 stopped at headers, so this starts by decoding one full `CAR4`/`MDLS`
+container: models, shapes, VIF packets, texture transfer and relocation. Gates in order: write the decoded model
+back byte-identically; substitute one shape's vertices and see it in game; then convert one GT3 car
+(`gt3tool car-export`, MIT) into that written form with wheels, LOD and the garage preview. Porsche 911 (996) GT3
+and Lamborghini Diablo are the targets with no GT4 equivalent at all. Every visible result is the owner's in-game
+test; effort is not measured and this is the long pipeline.
+
+### TASK-218 — GT4 course containers and the first ported circuit (📋 Planned, research)
+
+Third pipeline. Decode one `crs/<id>` end to end: the 24–29 typed sections (`GTM1` models, `Vls0` reflection
+slots, scenery), the road surface, the AI line and the start grid, plus the `<id>.ad` race data and the `COURSE`
+row. Gates: byte-identical write back; substitute the road and scenery of one course with a converted GT3 circuit
+(Complex String first — pure geometry — then Rome Circuit); owner drives it. The six missing circuits are listed in
+the port document; the dirt and mountain ones come after the tarmac.
+
+### TASK-219 — Larger starting field (📋 Planned, study, mod)
+
+The owner asked for GT3's "more cars per race". GT3 ran six-car grids, the same as GT4, so this is a new mod under
+decision 0073, not a port: grid slots, opponent spawn, the HUD position list, replays and memory all assume six.
+Study first (where the field size is decided, what breaks at eight), then one bounded experiment in Arcade, off by
+default and identical to the reference when off.
