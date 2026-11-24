@@ -3447,6 +3447,11 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   at an existing model code: Mitsubishi Lancer Evolution VI GSR T.M.E. on the Evolution VI GSR body is the first
   candidate. It is the cheapest experiment that answers whether the menus and the save system enumerate cars from
   the SpecDB at runtime (Unknown today).
+- Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
+  family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
+  `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
+  `RACINGMODIFY`, …), and the MIT `gt3tool db` dumps GT3's counterparts to CSV, so the car port is a per-table mapping
+  keyed by label on both sides.
 - Milestone A1 is done (2026-11-24): `scripts/gt4_specdb.py` and `tests/python/test_gt4_specdb.py`, 15 controls,
   13 synthetic plus 2 real-disc ones behind `GT4_SPECDB_ASSETS`. The four extracted tables and `VARIATION` decode,
   `ka_01` gives name index 84 and "Ford Ka `01", and every table round-trips through the writer with identical rows.

@@ -89,6 +89,14 @@ A trim GT3 car that matches an existing GT4 body (Evo VI T.M.E., 1999 Lancer, 32
 is therefore a row-level addition: a new row ID with the right name and the existing
 model code. No geometry, no textures, no model converter.
 
+Identity and art are only part of a car. GT4 keeps the specifications in the same table
+family GT3 uses — `CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`, `SUSPENSION`,
+`TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
+`RACINGMODIFY`, … 79 tables in `GT4_US2560`, and `gt3tool db` already dumps GT3's
+counterparts (`car`, `car_variant`, `chassis`, `engine`, `gear`, `front_tire`, …). So the
+port is a per-table mapping between two databases with the same taxonomy, keyed by label
+on both sides — not a translation from GT3's monolithic 264-byte car record.
+
 What the disc says about the format (TASK-216 milestone 1, 2026-11-24): a row is a
 *stream*, not a compressed byte run. It starts with a symbol count; count one copies a
 row from a 64-row block pool, a larger count patches a template row (the first symbol
