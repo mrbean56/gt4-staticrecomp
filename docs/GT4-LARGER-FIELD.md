@@ -16,9 +16,10 @@ v2.00 data (709 rows) uses:
 | 1 | 85 | time trials and solo events |
 | 4 | 1 | one four-car event |
 
-Confirmed against the rows themselves: `am_sunday_0001` (`80 00 00 00 … 06 01 02 …`) has `06` at 0x3E, and the
-ranges around it read as the documented columns (minutes at 0x10, prizes or start positions at 0x20, `StartType` = 2
-at 0x40).
+Confirmed against the rows themselves: every row is 151 bytes and the bytes around the field read as the mapping
+places them. `am_sunday_0001` ends `… 00 00 06 01 02 …`, i.e. the two zero `YearMin`/`YearMax` shorts at 0x38 and
+0x3A, an unnamed zero short at 0x3C, `06` at 0x3E, `01` at 0x3F and `StartType` 2 at 0x40 — the column order the
+mapping documents. The value itself is what settles it: 6 in ordinary races, 2 in two-car events, 1 in time trials.
 
 ## The opponent pool is not the grid
 
@@ -116,5 +117,8 @@ above.
 - Whether a 24-car field spawns 24 cars, and what the position board, results, replay and HUD do with the extra
   actors.
 - Guest RAM per additional car, and therefore the ceiling, if any.
+- Where the extra grid slots come from. The `RACE` row carries five start-position shorts (0x2E..0x37 in the mapping's
+  order), and the six-car rows read zero there; whether a course computes its grid from its own start line or takes
+  slots from this row is not settled, so 24 cars may share six grid positions until it is.
 
 The next step is therefore the boot test on the owner's machine, not more static work.
