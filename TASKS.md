@@ -3500,6 +3500,12 @@ its 32 MB.
   holding an immediate 6, with `slti …, 6` bounds checks in `RaceEntryInformation`, `RaceMonitor`, `RaceMiniMap`,
   `RaceDisplayLapDiffEvent` and `RaceTraining` (candidates, Hypothesis: R5900 decoding needs the project's own
   translator before any of them is called the field limit).
+- Study (2026-11-24, offline, from the pinned disc): the opponent side is **not** fixed at six. All 828
+  `specdb/GT4_US2560/RACES/*` files decode as `[u32 count][u32 0]` plus `count` 16-byte entries, and the counts run
+  from 0 to 29 (histogram: 1 car in 231 files, 5 in 42, 6 in 59, 13 in 29, 24 in 22, 29 in 10). The entry objects are
+  built through virtual calls (`RaceEntryBase__virtual_01` → `RaceEntryCar__structor_0` → `RaceEntryInformation`), so
+  the list is dynamic. Hypothesis: the six is enforced by the starting grid, the position board, the results table and
+  the replay buffer, not by the opponent list — which is the part the mod has to rebuild.
 - Then eight cars in one Arcade race, off by default and identical to the reference when off. 24 only if that
   measurement supports it; on the original engine four times the actors is a race-system rewrite, and the owner is told
   the measured ceiling before any work goes further.
