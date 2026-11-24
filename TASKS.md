@@ -3490,3 +3490,19 @@ The owner asked for GT3's "more cars per race". GT3 ran six-car grids, the same 
 decision 0073, not a port: grid slots, opponent spawn, the HUD position list, replays and memory all assume six.
 Study first (where the field size is decided, what breaks at eight), then one bounded experiment in Arcade, off by
 default and identical to the reference when off.
+
+### TASK-220 — Run from an extracted disc folder instead of the ISO (📋 Planned, native)
+
+Owner request (2026-11-24): stop loading the disc image at run time. Goal: the game reads its data from a folder holding
+the owner's own extracted disc (GT4.VOL 2,459,502,592 B plus `CORE.GT4`, `SCUS_973.28`, `SYSTEM.CNF` and any remaining
+ISO9660 leaves), so a local install is half the footprint of the 5,314,478,080 B image and no ISO9660 parsing sits in the
+read path.
+- Where: the donor's HLE CDVD layer (`runtime/src/iop/cdvd.cpp`, `cdvdfsv.cpp`), applied as an overlay capsule the way
+  `scripts/prepare_license_guard.py` and the FSV trace already change pinned donor files, plus a start-up option
+  (`--disc-folder <dir>` or a receipt field) in `native/standalone.*`.
+- Gates: every guest read identical to an ISO run (FSV trace offsets/lengths/bytes), the game boots, a reference-scene
+  frame comparison matches, owner test. Normal installs keep the linked image (decision 0075).
+- Licensing: the extracted folder is the owner's own data. It is never committed, never put in an installer and never
+  published; the repository ships only the extraction tooling and the overlay.
+- Unknown: whether anything reads raw sectors (CDDA, subchannel) that a folder cannot serve; effort is not measured, and
+  every visible result needs the Windows build.
