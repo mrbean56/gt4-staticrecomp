@@ -90,6 +90,25 @@ Image built from the owner's disc: `~/opencode/gt4/gt4-field24.iso`, 5,314,478,0
   537 rows at 24 and 172 unchanged;
 - bytes outside the `GT4.VOL` extent identical (216,840,192 before, 2,638,135,296 after; same file size).
 
+## The switch
+
+Decision 0073: the mod is off by default and the reference game is untouched when it is off. Nothing in this tool
+runs on its own — the player's pinned image is the reference, and a field-expanded image is a separate file produced
+by an explicit command. The later setup-time version (TASK-221) keeps the same rule: the conversion writes its own
+copy, and skipping it leaves the reference data alone.
+
+## Test order for the owner
+
+1. `gt4-rebuilt.iso` (SHA-256 `e8597dcf…`) — the control: the same uncompressed-table path with no field change.
+   If this fails to boot, the field image cannot tell us anything yet.
+2. `gt4-field24.iso` (SHA-256 `60e7ca91…`) — the field change on top of the same path.
+
+Both sit in `~/opencode/gt4/`, with symlinks in `/tmp/opencode/`. The launcher pins the disc hash, so a candidate is
+run by the game binary directly: `gt4vulkan.exe SCUS_973.28 --ntsc --disc <iso> --memcard <card> --window`. What to
+look for in Arcade: a six-car event that now starts 24 cars, whether the position board and results list stay
+readable, and whether the frame rate holds. A crash names the arrays; a clean race moves the mod to the code sites
+above.
+
 ## What is Unknown
 
 - Whether the game boots this image at all: `RACE.dbt` is now stored through the writer's uncompressed GTDB path,
