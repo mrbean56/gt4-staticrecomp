@@ -1,30 +1,44 @@
-"""Byte-identical GT4.VOL rewrite: ToC, stored entries and optional replacements.
+"""GT4.VOL rewrite: re-encoded catalogue, relocated payloads, resized replacements.
 
 Reads the USA v2.00 disc image, verifies ``docs/inputs/usa-v2.00.json``, and
-copies the GT4.VOL region to a new file: the bytes before the catalogue, the
-ToC and its padding, then every stored entry in volume order, with the
-inter-entry gaps copied verbatim. The catalogue pages are written from their
-stored bytes, never re-encoded, so a change that needs new page bytes (an entry
-whose stored size changes) is refused instead of guessed.
+copies it with the GT4.VOL region rebuilt: the opaque prefix, the catalogue
+re-encoded from its decoded pages, then every stored entry in its original
+order with recomputed page-aligned offsets.
 
-A replacement is decoded payload bytes for one catalogue path. It is re-framed
-with the entry's own kind (raw run, or PS2ZIP: magic, size complement, raw
-DEFLATE) and must keep the stored size the catalogue records. When re-framing is
-not byte-identical to the stored bytes but the payload did not change, the
-stored bytes are copied, so an unchanged payload never moves a byte.
+Catalogue decoding and encoding mirror ``scripts/gt4_volume.py`` (standard
+library only here; that module imports pycdlib). Keep the two decoders in step.
 
-Catalogue decoding mirrors ``scripts/gt4_volume.py`` (standard library only
-here; that module imports pycdlib). Keep the two decoders in step.
+What the encoder reproduces: the 64-byte header (stored size, allocated pages,
+page size, logical pages), the XOR-encoded page offset table, and each page's
+header, entry table, keys and metadata. A page's unused space (stale bytes, not
+zero-filled) and the four bytes before its entry table are carried verbatim
+from the decoded page; their meaning is Unknown, so they are never recomputed.
+An entry's node kind and metadata length are preserved, so a replacement changes
+its payload and sizes, never how the entry is stored.
+
+A replacement is decoded payload bytes for one catalogue path, of any length up
+to ``FILE_CAP``. It is re-framed with the entry's own kind (raw run, or PS2ZIP:
+magic, size complement, raw DEFLATE). When the decoded payload is unchanged the
+stored bytes are copied, so an unchanged entry never moves a byte. Entries keep
+their shipped offset unless a growing neighbour needs the space.
+
+The volume keeps its shipped extent and page allocation: the catalogue must
+still fit the pages it was allocated, and the payload layout must fit the
+existing GT4.VOL extent. A change that needs either to grow is refused, not
+guessed. Whether the game accepts a rebuilt volume, and a catalogue whose stored
+page sizes differ from the shipped ones, is Unknown until tried in game.
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 from pathlib import Path
 import struct
+from typing import Sequence
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +50,11 @@ PAGE_BYTES = 2048
 CATALOGUE_CAP = 2 * 1024 * 1024
 FILE_CAP = 16 * 1024 * 1024
 PS2ZIP_MAGIC = 0xFFF7EEC5
+TOC_MAGIC = 0xACB990AD
+TOC_VERSION = 0x00030001
+PAGE_XOR_KEY = 0x14AC327A
+PAGE_XOR_BYTE = 0x55
+MAX_STORED_PAGE = 4096
 CHUNK_BYTES = 1024 * 1024
 
 
@@ -102,8 +121,6 @@ def frame_payload(decoded: bytes, kind: int) -> bytes:
     require(kind in (1, 2), "unsupported file kind")
     if kind == 1:
         return decoded
-    # Level 9 gives the smallest re-framing, which is the most likely to keep
-    # the stored size; an unchanged payload still falls back to its stored bytes.
     encoder = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
     compressed = encoder.compress(decoded) + encoder.flush(zlib.Z_FINISH)
     return struct.pack("<II", PS2ZIP_MAGIC, (-len(decoded)) & 0xFFFFFFFF) + compressed
@@ -118,6 +135,31 @@ class Record:
     offset: int = 0
     stored_size: int = 0
     size: int = 0
+    toc_page: int = 0
+    toc_slot: int = 0
+
+
+@dataclass(frozen=True)
+class TocEntry:
+    """One catalogue entry: a key (parent and name) and its metadata bytes."""
+
+    key_offset: int
+    key: bytes
+    meta_offset: int
+    meta_size: int
+    meta: bytes = b""  # empty on index pages, whose metadata fields hold a child page
+
+
+@dataclass(frozen=True)
+class TocPage:
+    """A decoded catalogue page plus the layout bytes the encoder preserves."""
+
+    kind: int
+    next_page: int
+    previous_page: int
+    entries: tuple[TocEntry, ...]
+    trailer: bytes  # four bytes before the entry table; meaning Unknown
+    layout: bytes   # the decoded page this structure was read from
 
 
 @dataclass(frozen=True)
@@ -128,6 +170,10 @@ class Catalogue:
     records: int
     stored_sha256: str
     decoded_sha256: str
+    physical_pages: int = 0
+    data_start: int = 0
+    page_structures: tuple[TocPage, ...] = ()
+    stored_pages: tuple[bytes, ...] = ()
 
 
 def check_name(name: str, *, root: bool = False) -> None:
@@ -177,76 +223,186 @@ def resolve_records(records: list[Record]) -> tuple[dict[str, Record], int]:
     return files, len(directories)
 
 
-def parse_catalogue(stored: bytes, volume_size: int) -> Catalogue:
+def parse_catalogue_header(stored: bytes) -> tuple[int, int, int]:
+    """Validate the RoFS header; return (physical_pages, logical_pages, data_start)."""
     require(64 <= len(stored) <= CATALOGUE_CAP, "catalogue input cap/header")
     magic, version, stored_size, physical_pages, page_bytes, logical_pages = struct.unpack_from(
         "<IIIIHH", stored)
-    require(magic == 0xACB990AD and version == 0x00030001, "unsupported RoFS header")
+    require(magic == TOC_MAGIC and version == TOC_VERSION, "unsupported RoFS header")
+    require(not any(stored[20:64]), "unsupported reserved bytes in the RoFS header")
     require(stored_size == len(stored) and page_bytes == PAGE_BYTES,
             "catalogue size/page size mismatch")
     require(logical_pages > 0 and logical_pages * PAGE_BYTES <= CATALOGUE_CAP,
             "catalogue output cap")
+    require(physical_pages > 0, "empty catalogue page allocation")
     data_start = TOC_OFFSET + physical_pages * PAGE_BYTES
-    require(TOC_OFFSET + len(stored) <= data_start <= volume_size,
-            "catalogue/data overlap or data outside volume")
+    require(TOC_OFFSET + len(stored) <= data_start, "catalogue/data overlap")
+    return physical_pages, logical_pages, data_start
+
+
+def decode_stored_page(stored: bytes) -> bytes:
+    encrypted = inflate_exact(stored, PAGE_BYTES, PAGE_BYTES, page=True)
+    return bytes(value ^ PAGE_XOR_BYTE for value in encrypted)
+
+
+def parse_page_image(image: bytes, logical_pages: int) -> TocPage:
+    """Validate one decoded catalogue page and return its structure."""
+    require(len(image) == PAGE_BYTES, "page size mismatch")
+    kind, count, next_page, previous_page = struct.unpack_from("<HHii", image)
+    require(kind in (0, 1), "unsupported page kind")
+    require(all(link == -1 or 0 <= link < logical_pages
+                for link in (next_page, previous_page)), "page link out of range")
+    require(count % 2 == kind, "page entry count parity")
+    slots = count // 2
+    require(slots <= (PAGE_BYTES - 16) // 8, "page table exceeds page")
+    table_start = PAGE_BYTES - slots * 8 - 4
+    entries = []
+    for index in range(slots):
+        key_offset, key_size, meta_offset, meta_size = struct.unpack_from(
+            "<HHHH", image, PAGE_BYTES - (index + 1) * 8)
+        extent(key_offset, key_size, table_start, 12)
+        require(key_size >= (1 if kind else 5), "short record key")
+        if kind == 1:
+            require((meta_offset | meta_size << 16) < logical_pages,
+                    "index child out of range")
+            entries.append(TocEntry(key_offset, image[key_offset:key_offset + key_size],
+                                    meta_offset, meta_size))
+            continue
+        extent(meta_offset, meta_size, table_start, 12)
+        require(meta_size > 0, "empty node metadata")
+        require(key_offset + key_size <= meta_offset or meta_offset + meta_size <= key_offset,
+                "key/metadata overlap")
+        entries.append(TocEntry(key_offset, image[key_offset:key_offset + key_size],
+                                meta_offset, meta_size,
+                                image[meta_offset:meta_offset + meta_size]))
+    return TocPage(kind, next_page, previous_page, tuple(entries),
+                   image[table_start:table_start + 4], image)
+
+
+def stored_page_slices(stored: bytes, logical_pages: int) -> list[bytes]:
+    """Return each stored page, checking the XOR-encoded offset framing."""
     table_end = 64 + 4 * (logical_pages + 1)
     extent(64, table_end - 64, len(stored))
     offsets = [struct.unpack_from("<I", stored, 64 + index * 4)[0]
-               ^ (((index + 1) * 0x14AC327A) & 0xFFFFFFFF)
+               ^ (((index + 1) * PAGE_XOR_KEY) & 0xFFFFFFFF)
                for index in range(logical_pages + 1)]
     require(offsets[0] == table_end and offsets[-1] == len(stored), "page offset framing")
-    require(all(0 < right - left <= 4096 for left, right in zip(offsets, offsets[1:])),
+    require(all(0 < right - left <= MAX_STORED_PAGE
+                for left, right in zip(offsets, offsets[1:])),
             "unordered or oversized stored page")
+    return [stored[left:right] for left, right in zip(offsets, offsets[1:])]
+
+
+def parse_page_images(stored: bytes, logical_pages: int) -> tuple[TocPage, ...]:
+    """Decode every stored catalogue page."""
+    return tuple(parse_page_image(decode_stored_page(slice_), logical_pages)
+                 for slice_ in stored_page_slices(stored, logical_pages))
+
+
+def encode_page(page: TocPage) -> bytes:
+    """Rebuild one decoded page image from its structure.
+
+    The unused bytes of the page (stale, not zero-filled) and the four trailer
+    bytes keep their decoded values; keys and metadata are written from the
+    structure over emptied regions, so no stale byte can stand in for either.
+    """
+    slots = len(page.entries)
+    table_start = PAGE_BYTES - slots * 8 - 4
+    image = bytearray(page.layout)
+    require(len(image) == PAGE_BYTES and page.kind in (0, 1), "unsupported page kind")
+    struct.pack_into("<HHii", image, 0, page.kind, 2 * slots + page.kind,
+                     page.next_page, page.previous_page)
+    for entry in page.entries:
+        extent(entry.key_offset, len(entry.key), table_start, 12)
+        image[entry.key_offset:entry.key_offset + len(entry.key)] = bytes(len(entry.key))
+        if page.kind == 0:
+            require(entry.meta_size == len(entry.meta), "metadata size mismatch")
+            extent(entry.meta_offset, len(entry.meta), table_start, 12)
+            image[entry.meta_offset:entry.meta_offset + len(entry.meta)] = bytes(len(entry.meta))
+    for index, entry in enumerate(page.entries):
+        struct.pack_into("<HHHH", image, PAGE_BYTES - (index + 1) * 8,
+                         entry.key_offset, len(entry.key),
+                         entry.meta_offset, entry.meta_size)
+        image[entry.key_offset:entry.key_offset + len(entry.key)] = entry.key
+        if page.kind == 0:
+            image[entry.meta_offset:entry.meta_offset + len(entry.meta)] = entry.meta
+    image[table_start:table_start + 4] = page.trailer
+    return bytes(image)
+
+
+def encode_stored_page(page: TocPage) -> bytes:
+    """XOR-encrypt and raw-DEFLATE one page, finished rather than sync-flushed."""
+    image = encode_page(page)
+    encoder = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    stored = encoder.compress(bytes(value ^ PAGE_XOR_BYTE for value in image))
+    stored += encoder.flush(zlib.Z_FINISH)
+    require(0 < len(stored) <= MAX_STORED_PAGE, "stored page exceeds its slot")
+    return stored
+
+
+def encode_catalogue(pages: Sequence[TocPage], stored_pages: Sequence[bytes],
+                     physical_pages: int) -> bytes:
+    """Assemble a stored catalogue: header, XOR offset table, stored pages."""
+    require(len(pages) == len(stored_pages) and len(pages) > 0,
+            "catalogue page count mismatch")
+    require(len(pages) * PAGE_BYTES <= CATALOGUE_CAP, "catalogue output cap")
+    table_end = 64 + 4 * (len(pages) + 1)
+    offsets = [table_end]
+    for stored in stored_pages:
+        require(0 < len(stored) <= MAX_STORED_PAGE, "stored page exceeds its slot")
+        offsets.append(offsets[-1] + len(stored))
+    require(offsets[-1] <= physical_pages * PAGE_BYTES,
+            "catalogue does not fit its allocated pages")
+    header = struct.pack("<IIIIHH", TOC_MAGIC, TOC_VERSION, offsets[-1],
+                         physical_pages, PAGE_BYTES, len(pages)) + bytes(64 - 20)
+    table = b"".join(struct.pack("<I", offset ^ (((index + 1) * PAGE_XOR_KEY) & 0xFFFFFFFF))
+                     for index, offset in enumerate(offsets))
+    return header + table + b"".join(stored_pages)
+
+
+def reencode_catalogue(stored: bytes) -> bytes:
+    """Re-encode every page of a stored catalogue, keeping its page allocation."""
+    physical_pages, logical_pages, _ = parse_catalogue_header(stored)
+    pages = parse_page_images(stored, logical_pages)
+    return encode_catalogue(pages, [encode_stored_page(page) for page in pages],
+                            physical_pages)
+
+
+def parse_catalogue(stored: bytes, volume_size: int) -> Catalogue:
+    physical_pages, logical_pages, data_start = parse_catalogue_header(stored)
+    require(data_start <= volume_size, "catalogue data outside volume")
+    pages = parse_page_images(stored, logical_pages)
     records = []
     decoded_hash = hashlib.sha256()
-    for left, right in zip(offsets, offsets[1:]):
-        encrypted = inflate_exact(stored[left:right], PAGE_BYTES, PAGE_BYTES, page=True)
-        page = bytes(value ^ 0x55 for value in encrypted)
-        decoded_hash.update(page)
-        kind, count, next_page, previous_page = struct.unpack_from("<HHii", page)
-        require(kind in (0, 1), "unsupported page kind")
-        require(all(link == -1 or 0 <= link < logical_pages
-                    for link in (next_page, previous_page)), "page link out of range")
-        require(count % 2 == kind, "page entry count parity")
-        entries = count // 2
-        require(entries <= (PAGE_BYTES - 16) // 8, "page table exceeds page")
-        table_start = PAGE_BYTES - entries * 8 - 4
-        # Delimiter interpretation/routing are deliberately not used for lookup.
-        for index in range(entries):
-            key_offset, key_size, meta_offset, meta_size = struct.unpack_from(
-                "<HHHH", page, PAGE_BYTES - (index + 1) * 8)
-            extent(key_offset, key_size, table_start, 12)
-            require(key_size >= (1 if kind else 5), "short record key")
-            if kind == 1:
-                child = meta_offset | meta_size << 16
-                require(child < logical_pages, "index child out of range")
-                continue
-            extent(meta_offset, meta_size, table_start, 12)
-            require(meta_size > 0, "empty node metadata")
-            require(key_offset + key_size <= meta_offset or meta_offset + meta_size <= key_offset,
-                    "key/metadata overlap")
-            key = page[key_offset:key_offset + key_size]
+    for page_index, page in enumerate(pages):
+        decoded_hash.update(page.layout)
+        if page.kind == 1:
+            continue
+        for slot, entry in enumerate(page.entries):
             try:
-                name = key[4:].decode("utf-8")
+                name = entry.key[4:].decode("utf-8")
             except UnicodeDecodeError as error:
                 raise VolumeWriteError("invalid record name encoding") from error
-            parent = int.from_bytes(key[:4], "big")
-            meta = page[meta_offset:meta_offset + meta_size]
+            parent = int.from_bytes(entry.key[:4], "big")
+            meta = entry.meta
             node_kind = meta[0]
-            require(node_kind in (0, 1, 2) and meta_size == (5, 13, 17)[node_kind],
+            require(node_kind in (0, 1, 2) and len(meta) == (5, 13, 17)[node_kind],
                     "unsupported node metadata")
             if node_kind == 0:
-                records.append(Record(parent, name, 0, struct.unpack_from("<I", meta, 1)[0]))
+                records.append(Record(parent, name, 0, struct.unpack_from("<I", meta, 1)[0],
+                                      toc_page=page_index, toc_slot=slot))
             else:
-                data_page, modified, packed = struct.unpack_from("<III", meta, 1)
+                data_page, _, packed = struct.unpack_from("<III", meta, 1)
                 size = packed if node_kind == 1 else struct.unpack_from("<I", meta, 13)[0]
                 offset = data_start + data_page * PAGE_BYTES
                 extent(offset, packed, volume_size, data_start)
                 records.append(Record(parent, name, node_kind, offset=offset,
-                                      stored_size=packed, size=size))
+                                      stored_size=packed, size=size,
+                                      toc_page=page_index, toc_slot=slot))
     files, directories = resolve_records(records)
     return Catalogue(files, directories, logical_pages, len(records), digest(stored),
-                     decoded_hash.hexdigest())
+                     decoded_hash.hexdigest(), physical_pages, data_start,
+                     pages, tuple(stored_page_slices(stored, logical_pages)))
 
 
 def read_catalogue(stream, origin: int = 0, volume_size: int = VOLUME_SIZE) -> Catalogue:
@@ -258,18 +414,32 @@ def read_catalogue(stream, origin: int = 0, volume_size: int = VOLUME_SIZE) -> C
     return parse_catalogue(stored, volume_size)
 
 
-def reframe_replacement(record: Record, decoded: bytes, stored: bytes) -> tuple[bytes, bool]:
-    """Return the stored bytes to write and whether the original ones were kept."""
-    require(len(decoded) == record.size, "replacement decoded size mismatch")
-    framed = frame_payload(decoded, record.kind)
-    if framed == stored:
-        return framed, False
-    # Re-framing is not byte-stable across encoders; an unchanged payload keeps
-    # its stored bytes so the rewrite stays byte-identical.
+def reframe_replacement(record: Record, decoded: bytes,
+                        stored: bytes) -> tuple[bytes, bool, int]:
+    """Return (stored bytes, whether the shipped bytes were kept, decoded size)."""
+    require(len(decoded) <= FILE_CAP, "file cap exceeded")
     if decoded == decode_payload(stored, record.kind, record.size):
-        return stored, True
-    require(len(framed) == record.stored_size, "replacement changes the stored size")
-    return framed, False
+        return stored, True, record.size
+    return frame_payload(decoded, record.kind), False, len(decoded)
+
+
+def patch_page_entry(page: TocPage, slot: int, data_page: int,
+                     stored_size: int, size: int) -> TocPage:
+    """Rewrite one leaf entry's payload location and sizes, keeping its modified field."""
+    entry = page.entries[slot]
+    meta = entry.meta
+    node_kind = meta[0]
+    require(node_kind in (1, 2) and len(meta) == (5, 13, 17)[node_kind],
+            "unsupported node metadata")
+    modified = struct.unpack_from("<I", meta, 5)[0]
+    patched = meta[:1] + struct.pack("<III", data_page, modified, stored_size)
+    if node_kind == 2:
+        patched += struct.pack("<I", size)
+    else:
+        require(size == stored_size, "raw entry sizes disagree")
+    entries = list(page.entries)
+    entries[slot] = replace(entry, meta=patched)
+    return replace(page, entries=tuple(entries))
 
 
 @dataclass(frozen=True)
@@ -279,6 +449,9 @@ class EntryReport:
     offset: int
     stored_size: int
     size: int
+    source_offset: int
+    source_stored_size: int
+    source_size: int
     replaced: bool
     reused_stored: bool
 
@@ -291,11 +464,70 @@ class Report:
     source_sha256: str
     written_sha256: str
     identical: bool
+    physical_pages: int
+    data_start: int
     entries: tuple[EntryReport, ...]
 
 
+@dataclass(frozen=True)
+class Plan:
+    catalogue: Catalogue
+    toc: bytes
+    entries: tuple[EntryReport, ...]
+    payloads: dict[str, bytes]
+
+
+def build_plan(stream, origin: int, volume_size: int,
+               replacements: dict[str, bytes] | None = None) -> Plan:
+    """Decide every entry's new offset and the catalogue bytes that describe it."""
+    catalogue = read_catalogue(stream, origin, volume_size)
+    limit = origin + volume_size
+    replacements = {} if replacements is None else replacements
+    payloads = {}
+    for path, decoded in replacements.items():
+        require(path in catalogue.files, "replacement path is absent: " + path)
+        require(isinstance(decoded, (bytes, bytearray)), "replacement must be payload bytes")
+        record = catalogue.files[path]
+        stored = read_at(stream, origin + record.offset, record.stored_size, limit)
+        payload, reused, size = reframe_replacement(record, bytes(decoded), stored)
+        payloads[path] = (payload, reused, size)
+
+    cursor = catalogue.data_start
+    entries = []
+    patched: dict[int, list[tuple[int, int, int, int]]] = defaultdict(list)
+    source_end = 0
+    for path, record in sorted(catalogue.files.items(), key=lambda item: item[1].offset):
+        require(record.offset >= source_end, "entry extents overlap or are out of order")
+        source_end = record.offset + record.stored_size
+        payload, reused, size = payloads.get(path, (None, False, record.size))
+        stored_size = record.stored_size if payload is None else len(payload)
+        start = max(cursor, record.offset)
+        start = (start + PAGE_BYTES - 1) // PAGE_BYTES * PAGE_BYTES
+        data_page, aligned = divmod(start - catalogue.data_start, PAGE_BYTES)
+        require(aligned == 0 and 0 <= data_page < 1 << 32,
+                "entry offset is not a page index")
+        if (start, stored_size, size) != (record.offset, record.stored_size, record.size):
+            patched[record.toc_page].append((record.toc_slot, data_page, stored_size, size))
+        cursor = start + stored_size
+        entries.append(EntryReport(path, record.kind, start, stored_size, size,
+                                   record.offset, record.stored_size, record.size,
+                                   payload is not None, reused))
+    require(cursor <= volume_size, "volume layout does not fit the GT4.VOL extent")
+
+    stored_pages = []
+    for index, page in enumerate(catalogue.page_structures):
+        if index in patched:
+            for slot, data_page, stored_size, size in patched[index]:
+                page = patch_page_entry(page, slot, data_page, stored_size, size)
+            stored_pages.append(encode_stored_page(page))
+        else:
+            stored_pages.append(catalogue.stored_pages[index])
+    toc = encode_catalogue(catalogue.page_structures, stored_pages, catalogue.physical_pages)
+    return Plan(catalogue, toc, tuple(entries), {path: item[0] for path, item in payloads.items()})
+
+
 def copy_range(stream, output, offset: int, length: int, limit: int,
-               source_hash, written_hash) -> None:
+               written=None) -> None:
     extent(offset, length, limit)
     stream.seek(offset)
     remaining = length
@@ -303,69 +535,73 @@ def copy_range(stream, output, offset: int, length: int, limit: int,
         data = stream.read(min(remaining, CHUNK_BYTES))
         require(bool(data), "short input read")
         output.write(data)
-        source_hash.update(data)
-        written_hash.update(data)
+        if written is not None:
+            written.update(data)
         remaining -= len(data)
+
+
+def hash_region(stream, offset: int, length: int, limit: int) -> str:
+    extent(offset, length, limit)
+    stream.seek(offset)
+    hasher = hashlib.sha256()
+    remaining = length
+    while remaining:
+        data = stream.read(min(remaining, CHUNK_BYTES))
+        require(bool(data), "short input read")
+        hasher.update(data)
+        remaining -= len(data)
+    return hasher.hexdigest()
+
+
+def write_plan(stream, output, plan: Plan, origin: int, volume_size: int) -> Report:
+    """Write one planned volume region, at ``origin`` in the source."""
+    limit = origin + volume_size
+    catalogue = plan.catalogue
+    written = hashlib.sha256()
+
+    def emit(data: bytes) -> None:
+        output.write(data)
+        written.update(data)
+
+    copy_range(stream, output, origin, TOC_OFFSET, limit, written)
+    emit(plan.toc)
+    pad_start = TOC_OFFSET + len(plan.toc)
+    copy_range(stream, output, origin + pad_start, catalogue.data_start - pad_start, limit,
+               written)
+    position = catalogue.data_start
+    for entry in plan.entries:
+        require(entry.offset >= position, "entry extents overlap or are out of order")
+        if entry.offset > position:
+            copy_range(stream, output, origin + position, entry.offset - position, limit,
+                       written)
+        if entry.path in plan.payloads:
+            emit(plan.payloads[entry.path])
+        else:
+            copy_range(stream, output, origin + entry.source_offset, entry.stored_size,
+                       limit, written)
+        position = entry.offset + entry.stored_size
+    if position < volume_size:
+        copy_range(stream, output, origin + position, volume_size - position, limit, written)
+    source_sha256 = hash_region(stream, origin, volume_size, limit)
+    written_sha256 = written.hexdigest()
+    return Report(volume_size, catalogue.stored_sha256, catalogue.decoded_sha256,
+                  source_sha256, written_sha256, source_sha256 == written_sha256,
+                  catalogue.physical_pages, catalogue.data_start, plan.entries)
 
 
 def rewrite_volume_region(stream, destination: Path, replacements: dict[str, bytes] | None = None,
                           *, origin: int = 0, volume_size: int = VOLUME_SIZE) -> Report:
-    """Rewrite one volume region; offsets are relative to ``origin``."""
-    limit = origin + volume_size
-    replacements = {} if replacements is None else replacements
-    catalogue = read_catalogue(stream, origin, volume_size)
-    ordered = sorted(catalogue.files.items(), key=lambda item: item[1].offset)
-    layout = []
-    entries = []
-    previous_end = 0
-    for path, record in ordered:
-        require(record.offset >= previous_end, "entry extents overlap or are out of order")
-        if record.offset > previous_end:
-            layout.append((previous_end, record.offset - previous_end, None))
-        layout.append((record.offset, record.stored_size, path))
-        previous_end = record.offset + record.stored_size
-        entries.append(EntryReport(path, record.kind, record.offset, record.stored_size,
-                                   record.size, path in replacements, False))
-    require(previous_end <= volume_size, "entry extent exceeds the volume")
-    if previous_end < volume_size:
-        layout.append((previous_end, volume_size - previous_end, None))
-    require(sum(length for _, length, _ in layout) == volume_size,
-            "volume layout does not cover the region exactly")
-
-    framed = {}
-    for path, decoded in replacements.items():
-        require(path in catalogue.files, "replacement path is absent: " + path)
-        require(isinstance(decoded, (bytes, bytearray)), "replacement must be payload bytes")
-        record = catalogue.files[path]
-        stored = read_at(stream, origin + record.offset, record.stored_size, limit)
-        framed[path] = reframe_replacement(record, bytes(decoded), stored)
-    entries = [replace(entry, reused_stored=framed[entry.path][1])
-               if entry.path in framed else entry for entry in entries]
-
-    source_hash = hashlib.sha256()
-    written_hash = hashlib.sha256()
+    """Rewrite one volume region into a fresh file; offsets are relative to ``origin``."""
+    plan = build_plan(stream, origin, volume_size, replacements)
     output = destination.open("xb")
     try:
         with output:
-            for offset, length, path in layout:
-                if path is not None and path in framed:
-                    written = framed[path][0]
-                    stored = read_at(stream, origin + offset, length, limit)
-                    output.write(written)
-                    source_hash.update(stored)
-                    written_hash.update(written)
-                else:
-                    copy_range(stream, output, origin + offset, length, limit,
-                               source_hash, written_hash)
+            report = write_plan(stream, output, plan, origin, volume_size)
     except BaseException:
         # A half-written volume must not survive as if it were complete.
         destination.unlink(missing_ok=True)
         raise
-    source_sha256 = source_hash.hexdigest()
-    written_sha256 = written_hash.hexdigest()
-    return Report(volume_size, catalogue.stored_sha256, catalogue.decoded_sha256,
-                  source_sha256, written_sha256, source_sha256 == written_sha256,
-                  tuple(entries))
+    return report
 
 
 def load_disc_pin(path: Path = DISC_MANIFEST) -> dict:
@@ -394,17 +630,39 @@ def verify_disc(stream, pin: dict) -> None:
 
 def rewrite_volume(source: Path, destination: Path,
                    replacements: dict[str, bytes] | None = None) -> Report:
-    """Verify the pinned disc image, then rewrite the GT4.VOL region it holds."""
+    """Verify the pinned disc image, then write its GT4.VOL region alone."""
     pin = load_disc_pin()
     require(VOLUME_OFFSET + VOLUME_SIZE <= pin["size_bytes"],
             "GT4.VOL extent exceeds the pinned disc")
     require(not destination.exists(), "output already exists")
     with source.open("rb") as stream:
-        # The whole-disc pin stands in for the ISO9660 extent check gt4_volume
-        # makes through pycdlib.
         verify_disc(stream, pin)
         return rewrite_volume_region(stream, destination, replacements,
                                      origin=VOLUME_OFFSET, volume_size=VOLUME_SIZE)
+
+
+def rewrite_iso(source: Path, destination: Path,
+                replacements: dict[str, bytes] | None = None) -> Report:
+    """Verify the pinned disc image, then copy it with the GT4.VOL region rebuilt."""
+    pin = load_disc_pin()
+    require(VOLUME_OFFSET + VOLUME_SIZE <= pin["size_bytes"],
+            "GT4.VOL extent exceeds the pinned disc")
+    require(not destination.exists(), "output already exists")
+    plan = None
+    with source.open("rb") as stream:
+        verify_disc(stream, pin)
+        plan = build_plan(stream, VOLUME_OFFSET, VOLUME_SIZE, replacements)
+        output = destination.open("xb")
+        try:
+            with output:
+                copy_range(stream, output, 0, VOLUME_OFFSET, pin["size_bytes"])
+                report = write_plan(stream, output, plan, VOLUME_OFFSET, VOLUME_SIZE)
+                tail = pin["size_bytes"] - VOLUME_OFFSET - VOLUME_SIZE
+                copy_range(stream, output, VOLUME_OFFSET + VOLUME_SIZE, tail, pin["size_bytes"])
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -420,11 +678,13 @@ def main(argv: list[str] | None = None) -> int:
         if not separator or not path or not filename:
             parser.error("--replace needs CATALOGUE_PATH=PAYLOAD_FILE")
         replacements[path] = Path(filename).read_bytes()
-    report = rewrite_volume(arguments.iso, arguments.output, replacements or None)
+    report = rewrite_iso(arguments.iso, arguments.output, replacements or None)
     print(json.dumps({
         "volume_size": report.volume_size,
         "catalogue_sha256": report.catalogue_sha256,
         "decoded_catalogue_sha256": report.decoded_catalogue_sha256,
+        "physical_pages": report.physical_pages,
+        "data_start": report.data_start,
         "source_sha256": report.source_sha256,
         "written_sha256": report.written_sha256,
         "identical": report.identical,

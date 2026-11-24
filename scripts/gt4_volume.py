@@ -2,6 +2,8 @@
 
 Format facts: docs/NENKAI-REFERENCES.md. This enumerates validated leaf records;
 it does not implement or qualify B-tree key routing. No game/runtime dependency.
+``rebuilt_volume`` opens an image the writer rebuilt, where only the GT4.VOL
+extent can be checked; the pinned path still verifies the whole disc and slice119.
 """
 
 from __future__ import annotations
@@ -242,17 +244,35 @@ def verified_volume(iso_path: Path):
             iso.close()
 
 
-def read_catalogue(stream) -> Catalogue:
+@contextmanager
+def rebuilt_volume(iso_path: Path):
+    """Open an image the writer rebuilt; only its GT4.VOL extent can be checked."""
+    with iso_path.open("rb") as stream:
+        iso = pycdlib.PyCdlib()
+        try:
+            iso.open_fp(stream)
+            record = iso.get_record(iso_path="/GT4.VOL;1")
+            require(record.extent_location() * 2048 == VOLUME_OFFSET
+                    and record.data_length == VOLUME_SIZE, "unexpected GT4.VOL extent")
+            yield stream
+        finally:
+            iso.close()
+
+
+def read_catalogue(stream, *, pinned: bool = True) -> Catalogue:
     header = read_at(stream, VOLUME_OFFSET + TOC_OFFSET, 64, VOLUME_OFFSET + VOLUME_SIZE)
     size = struct.unpack_from("<I", header, 8)[0]
     require(64 <= size <= CATALOGUE_CAP, "catalogue input cap")
     stored = read_at(stream, VOLUME_OFFSET + TOC_OFFSET, size, VOLUME_OFFSET + VOLUME_SIZE)
-    pin = json.loads((ROOT / "docs/inputs/slice119-nenkai-assets.json").read_text(encoding="utf-8"))
-    require(digest(stored) == pin["catalogue"]["catalogue_input_window_sha256"],
-            "catalogue differs from reviewed slice119")
+    pin = None
+    if pinned:
+        pin = json.loads((ROOT / "docs/inputs/slice119-nenkai-assets.json").read_text(encoding="utf-8"))
+        require(digest(stored) == pin["catalogue"]["catalogue_input_window_sha256"],
+                "catalogue differs from reviewed slice119")
     catalogue = parse_catalogue(stored, VOLUME_SIZE)
-    require(catalogue.decoded_sha256 == pin["catalogue"]["decoded_catalogue_sha256"],
-            "decoded catalogue differs from reviewed slice119")
+    if pinned:
+        require(catalogue.decoded_sha256 == pin["catalogue"]["decoded_catalogue_sha256"],
+                "decoded catalogue differs from reviewed slice119")
     return catalogue
 
 

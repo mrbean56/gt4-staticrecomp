@@ -1,4 +1,4 @@
-"""Hand-packed GT4.VOL regions plus the byte-identity controls on the pinned disc."""
+"""Hand-packed GT4.VOL regions, the page encoder, resized replacements, pinned disc."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import random
 import struct
 import sys
 import tempfile
@@ -14,15 +15,21 @@ import unittest
 import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import gt4_specdb
 import gt4_volume_write as writer
 
 ROOT = Path(__file__).resolve().parents[2]
 ISO_PATH = Path(os.environ.get("GT4_ISO", ""))
+REBUILT_ISO = os.environ.get("GT4_REBUILT_ISO")
 TOC_OFFSET = writer.TOC_OFFSET
 PAGE_BYTES = writer.PAGE_BYTES
 DATA_START = TOC_OFFSET + PAGE_BYTES
 TAIL_BYTES = 512
 PAGE_XOR_KEY = 0x14AC327A
+GENERIC_CAR = "specdb/GT4_US2560/GENERIC_CAR.dbt"
+GENERIC_CAR_DECODED = 17_960
+GENERIC_CAR_UNCOMPRESSED = 23_120
+GENERIC_CAR_ROW_59 = "b00a00002400000078320000d107030d0d00000000000000"
 
 
 def raw_deflate(data, flush=zlib.Z_FINISH):
@@ -62,6 +69,24 @@ def leaf_page(files):
         raise AssertionError("fixture page is full")
     for index, fields in enumerate(table):
         struct.pack_into("<HHHH", page, PAGE_BYTES - (index + 1) * 8, *fields)
+    struct.pack_into("<HH", page, PAGE_BYTES - len(table) * 8 - 4, 0, (cursor + 3) // 4 * 4)
+    return bytes(page)
+
+
+def index_page(children):
+    """One RoFS index page; each child is addressed through its metadata fields."""
+    page = bytearray(PAGE_BYTES)
+    struct.pack_into("<HHii", page, 0, 1, 2 * len(children) + 1, -1, -1)
+    cursor = 12
+    table = []
+    for index, child in enumerate(children):
+        key = b"\0\0\0\0" + bytes([0x61 + index])
+        table.append((cursor, len(key), child, 0))
+        page[cursor:cursor + len(key)] = key
+        cursor += len(key)
+    for index, fields in enumerate(table):
+        struct.pack_into("<HHHH", page, PAGE_BYTES - (index + 1) * 8, *fields)
+    struct.pack_into("<I", page, PAGE_BYTES - len(children) * 8 - 4, 0x1234)
     return bytes(page)
 
 
@@ -75,13 +100,14 @@ def catalogue_bytes(page):
     return bytes(stored) + encoded
 
 
-def build_volume(entries):
+def build_volume(entries, page_count=None, tail=TAIL_BYTES):
     """entries: (name, kind, data_page, decoded, stored)."""
     page_files = [(1, name, kind, data_page, len(stored), len(decoded))
                   for name, kind, data_page, decoded, stored in entries]
     stored_catalogue = catalogue_bytes(leaf_page(page_files))
-    page_count = max(entry[2] for entry in entries) + 1
-    volume_size = DATA_START + PAGE_BYTES * page_count + TAIL_BYTES
+    if page_count is None:
+        page_count = max(entry[2] for entry in entries) + 1
+    volume_size = DATA_START + PAGE_BYTES * page_count + tail
     volume = bytearray((bytes(range(256)) * (volume_size // 256 + 1))[:volume_size])
     volume[TOC_OFFSET:TOC_OFFSET + len(stored_catalogue)] = stored_catalogue
     for name, kind, data_page, decoded, stored in entries:
@@ -102,6 +128,59 @@ def hash_stream(stream, length, chunk=8 * 1024 * 1024):
     return hasher.hexdigest()
 
 
+def toc_bytes_of(volume):
+    size = struct.unpack_from("<I", volume, TOC_OFFSET + 8)[0]
+    return volume[TOC_OFFSET:TOC_OFFSET + size]
+
+
+class PageEncoderTests(unittest.TestCase):
+    def test_leaf_page_round_trips_through_the_encoder(self):
+        page = leaf_page([(1, "a.bin", 2, 0, 10, 20), (1, "b.bin", 1, 0, 4, 4)])
+        parsed = writer.parse_page_image(page, 4)
+        self.assertEqual(parsed.kind, 0)
+        self.assertEqual(len(parsed.entries), 3)
+        self.assertEqual(writer.encode_page(parsed), page)
+        self.assertEqual(writer.decode_stored_page(writer.encode_stored_page(parsed)), page)
+
+    def test_index_page_round_trips_through_the_encoder(self):
+        page = index_page((1, 2, 3))
+        parsed = writer.parse_page_image(page, 4)
+        self.assertEqual(parsed.kind, 1)
+        self.assertEqual([entry.meta_offset | entry.meta_size << 16
+                          for entry in parsed.entries], [1, 2, 3])
+        self.assertEqual(writer.encode_page(parsed), page)
+        self.assertEqual(writer.decode_stored_page(writer.encode_stored_page(parsed)), page)
+
+    def test_index_child_out_of_range_is_refused(self):
+        with self.assertRaisesRegex(writer.VolumeWriteError, "index child"):
+            writer.parse_page_image(index_page((1, 5)), 4)
+
+    def test_reencoded_catalogue_preserves_paths_offsets_kinds_and_sizes(self):
+        packed = bytes(range(48)) * 8
+        volume = build_volume([
+            ("raw.bin", 1, 0, b"raw payload 0001", b"raw payload 0001"),
+            ("packed.bin", 2, 1, packed, writer.frame_payload(packed, 2)),
+        ])
+        stored = toc_bytes_of(volume)
+        rebuilt = writer.reencode_catalogue(stored)
+        self.assertNotEqual(rebuilt, stored, "re-encoding must not reuse shipped framing")
+        before = writer.parse_catalogue(stored, len(volume))
+        after = writer.parse_catalogue(rebuilt, len(volume))
+        self.assertEqual(sorted(before.files), sorted(after.files))
+        for path, record in before.files.items():
+            other = after.files[path]
+            self.assertEqual((record.kind, record.offset, record.stored_size, record.size),
+                             (other.kind, other.offset, other.stored_size, other.size), path)
+        self.assertEqual(before.directories, after.directories)
+        self.assertEqual(before.physical_pages, after.physical_pages)
+
+    def test_page_with_metadata_outside_the_entry_table_is_refused(self):
+        page = bytearray(leaf_page([(1, "a.bin", 1, 0, 4, 4)]))
+        struct.pack_into("<HHHH", page, PAGE_BYTES - 8, 12, 40, PAGE_BYTES - 2, 4)
+        with self.assertRaises(writer.VolumeWriteError):
+            writer.parse_page_image(bytes(page), 4)
+
+
 class SyntheticVolumeTests(unittest.TestCase):
     def setUp(self):
         self.raw = b"raw payload 0001"
@@ -120,12 +199,13 @@ class SyntheticVolumeTests(unittest.TestCase):
             ("change.bin", 2, 2, self.change, self.change_stored),
         ])
 
-    def rewrite(self, replacements=None):
+    def rewrite(self, replacements=None, volume=None):
+        volume = self.volume if volume is None else volume
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "volume.vol"
             report = writer.rewrite_volume_region(
-                io.BytesIO(self.volume), destination, replacements,
-                volume_size=len(self.volume),
+                io.BytesIO(volume), destination, replacements,
+                volume_size=len(volume),
             )
             return report, destination.read_bytes()
 
@@ -152,6 +232,10 @@ class SyntheticVolumeTests(unittest.TestCase):
              (2, DATA_START + PAGE_BYTES, len(self.stable_stored), len(self.stable)),
              (2, DATA_START + 2 * PAGE_BYTES, len(self.change_stored), len(self.change))],
         )
+        self.assertEqual([(entry.source_offset, entry.source_stored_size, entry.source_size)
+                          for entry in report.entries],
+                         [(entry.offset, entry.stored_size, entry.size)
+                          for entry in report.entries])
 
     def test_raw_replacement_changes_only_its_bytes(self):
         replacement = b"raw payload 0002"
@@ -188,6 +272,80 @@ class SyntheticVolumeTests(unittest.TestCase):
         self.assertEqual(written[start + entry.stored_size:],
                          self.volume[start + entry.stored_size:])
 
+    def test_growing_first_entry_relocates_the_entries_after_it(self):
+        replacement = bytes(random.Random(2160).randbytes(3000))
+        volume = build_volume([
+            ("raw.bin", 1, 0, self.raw, self.raw),
+            ("stable.bin", 2, 1, self.stable, self.stable_stored),
+            ("change.bin", 2, 2, self.change, self.change_stored),
+        ], page_count=6)
+        report, written = self.rewrite({"raw.bin": replacement}, volume)
+        raw = self.entry(report, "raw.bin")
+        stable = self.entry(report, "stable.bin")
+        change = self.entry(report, "change.bin")
+        self.assertEqual((raw.offset, raw.stored_size, raw.size),
+                         (DATA_START, len(replacement), len(replacement)))
+        self.assertEqual((raw.source_offset, raw.source_stored_size), (DATA_START, len(self.raw)))
+        self.assertEqual(stable.offset, DATA_START + 4096)
+        self.assertEqual(change.offset, DATA_START + 6144)
+        self.assertEqual([stable.stored_size, change.stored_size],
+                         [len(self.stable_stored), len(self.change_stored)])
+        reopened = writer.parse_catalogue(toc_bytes_of(written), len(written))
+        self.assertEqual(sorted(reopened.files), ["change.bin", "raw.bin", "stable.bin"])
+        self.assertEqual((reopened.files["raw.bin"].offset, reopened.files["raw.bin"].size),
+                         (DATA_START, 3000))
+        self.assertEqual(reopened.files["stable.bin"].offset, stable.offset)
+        self.assertEqual(reopened.files["change.bin"].offset, change.offset)
+        self.assertEqual(
+            writer.decode_payload(
+                written[stable.offset:stable.offset + stable.stored_size], 2, len(self.stable)),
+            self.stable)
+        self.assertEqual(
+            writer.decode_payload(
+                written[change.offset:change.offset + change.stored_size], 2, len(self.change)),
+            self.change)
+        source = writer.parse_catalogue(toc_bytes_of(volume), len(volume))
+        self.assertNotEqual(reopened.stored_sha256, source.stored_sha256)
+
+    def test_growing_compressed_entry_rewrites_its_metadata(self):
+        replacement = bytes(random.Random(2161).randbytes(5000))
+        volume = build_volume([
+            ("raw.bin", 1, 0, self.raw, self.raw),
+            ("stable.bin", 2, 1, self.stable, self.stable_stored),
+            ("change.bin", 2, 2, self.change, self.change_stored),
+        ], page_count=6)
+        report, written = self.rewrite({"change.bin": replacement}, volume)
+        change = self.entry(report, "change.bin")
+        self.assertEqual(change.offset, DATA_START + 2 * PAGE_BYTES)
+        self.assertEqual(change.size, 5000)
+        self.assertGreater(change.stored_size, len(self.change_stored))
+        reopened = writer.parse_catalogue(toc_bytes_of(written), len(written))
+        self.assertEqual((reopened.files["change.bin"].size, reopened.files["change.bin"].kind),
+                         (5000, 2))
+        self.assertEqual(
+            writer.decode_payload(written[change.offset:change.offset + change.stored_size],
+                                  2, 5000), replacement)
+        self.assertEqual(reopened.files["raw.bin"].offset, DATA_START)
+        self.assertEqual(reopened.files["stable.bin"].offset, DATA_START + PAGE_BYTES)
+
+    def test_shrinking_entry_leaves_the_next_offsets_alone(self):
+        replacement = b"short"
+        report, written = self.rewrite({"raw.bin": replacement})
+        self.assertEqual(self.entry(report, "raw.bin").stored_size, len(replacement))
+        self.assertEqual(self.entry(report, "stable.bin").offset, DATA_START + PAGE_BYTES)
+        self.assertEqual(self.entry(report, "change.bin").offset, DATA_START + 2 * PAGE_BYTES)
+        self.assertEqual(written[DATA_START + len(replacement):DATA_START + PAGE_BYTES],
+                         self.volume[DATA_START + len(replacement):DATA_START + PAGE_BYTES])
+
+    def test_layout_that_does_not_fit_the_extent_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "volume.vol"
+            with self.assertRaisesRegex(writer.VolumeWriteError, "does not fit"):
+                writer.rewrite_volume_region(
+                    io.BytesIO(self.volume), destination,
+                    {"raw.bin": bytes(6000)}, volume_size=len(self.volume))
+            self.assertFalse(destination.exists())
+
     def test_frame_payload_round_trips_both_kinds(self):
         for kind in (1, 2):
             with self.subTest(kind=kind):
@@ -199,9 +357,8 @@ class SyntheticVolumeTests(unittest.TestCase):
     def test_refusals_leave_no_output(self):
         cases = (
             ({"absent.bin": self.raw}, "absent"),
-            ({"raw.bin": self.raw + b"!"}, "decoded size"),
-            ({"stable.bin": b"\x00" * len(self.stable)}, "stored size"),
             ({"raw.bin": "text"}, "payload bytes"),
+            ({"raw.bin": b"x" * (writer.FILE_CAP + 1)}, "file cap"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "volume.vol"
@@ -230,14 +387,14 @@ class SyntheticVolumeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "wrong.iso"
             source.write_bytes(b"wrong")
-            destination = Path(temporary) / "output.vol"
+            destination = Path(temporary) / "output.iso"
             with self.assertRaisesRegex(writer.VolumeWriteError, "pinned USA v2.00"):
-                writer.rewrite_volume(source, destination)
+                writer.rewrite_iso(source, destination)
             self.assertFalse(destination.exists())
 
     def test_catalogue_rejects_unknown_page_framing(self):
-        size = struct.unpack_from("<I", self.volume, TOC_OFFSET + 8)[0]
-        stored = self.volume[TOC_OFFSET:TOC_OFFSET + size]
+        stored = toc_bytes_of(self.volume)
+        size = len(stored)
         extended = bytearray(stored) + b"x"
         struct.pack_into("<I", extended, 8, size + 1)
         struct.pack_into("<I", extended, 64 + 4,
@@ -249,10 +406,24 @@ class SyntheticVolumeTests(unittest.TestCase):
         with self.assertRaises(writer.VolumeWriteError):
             writer.parse_catalogue(bytes(damaged), len(self.volume))
 
+    def test_catalogue_that_no_longer_fits_its_pages_is_refused(self):
+        stored = toc_bytes_of(self.volume)
+        pages = writer.parse_page_images(stored, 1) * 2
+        with self.assertRaisesRegex(writer.VolumeWriteError, "allocated pages"):
+            writer.encode_catalogue(pages, [bytes(writer.MAX_STORED_PAGE)] * 2, 1)
+
+
+def require_pycdlib(test):
+    try:
+        import gt4_volume
+    except ImportError as error:
+        test.skipTest(f"read-only reader is unavailable here: {error}")
+    return gt4_volume
+
 
 @unittest.skipUnless(
     bool(os.environ.get("GT4_ISO")) and ISO_PATH.is_file(),
-    "set GT4_ISO to the pinned GT4 USA v2.00 ISO to run the byte-identity controls",
+    "set GT4_ISO to the pinned GT4 USA v2.00 ISO to run the real-disc controls",
 )
 class RealDiscTests(unittest.TestCase):
     @classmethod
@@ -260,6 +431,16 @@ class RealDiscTests(unittest.TestCase):
         with ISO_PATH.open("rb") as stream:
             stream.seek(writer.VOLUME_OFFSET)
             cls.source_sha256 = hash_stream(stream, writer.VOLUME_SIZE)
+
+    def catalogue_and_toc(self):
+        with ISO_PATH.open("rb") as stream:
+            header = writer.read_at(stream, writer.VOLUME_OFFSET + writer.TOC_OFFSET, 64,
+                                    writer.VOLUME_OFFSET + writer.VOLUME_SIZE)
+            size = struct.unpack_from("<I", header, 8)[0]
+            stored = writer.read_at(stream, writer.VOLUME_OFFSET + writer.TOC_OFFSET, size,
+                                    writer.VOLUME_OFFSET + writer.VOLUME_SIZE)
+            catalogue = writer.read_catalogue(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+        return catalogue, stored
 
     def test_noop_rewrite_matches_the_pinned_region(self):
         pin = json.loads(
@@ -284,12 +465,9 @@ class RealDiscTests(unittest.TestCase):
 
     def test_writer_catalogue_matches_the_read_only_reader(self):
         """The writer duplicates the reader; both must see one catalogue."""
-        try:
-            import gt4_volume
-        except ImportError as error:
-            self.skipTest(f"read-only reader is unavailable here: {error}")
+        volume = require_pycdlib(self)
         with ISO_PATH.open("rb") as stream:
-            theirs = gt4_volume.read_catalogue(stream)
+            theirs = volume.read_catalogue(stream)
             ours = writer.read_catalogue(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
         self.assertEqual(sorted(theirs.files), sorted(ours.files))
         for path, mine in ours.files.items():
@@ -299,6 +477,28 @@ class RealDiscTests(unittest.TestCase):
                 (other.offset, other.kind, other.stored_size, other.size),
                 path,
             )
+
+    def test_whole_catalogue_reencodes_from_its_decoded_pages(self):
+        catalogue, stored = self.catalogue_and_toc()
+        rebuilt = writer.reencode_catalogue(stored)
+        self.assertNotEqual(rebuilt, stored)
+        after = writer.parse_catalogue(rebuilt, writer.VOLUME_SIZE)
+        self.assertEqual(len(after.files), 18_352)
+        self.assertEqual(sorted(after.files), sorted(catalogue.files))
+        self.assertEqual(after.directories, catalogue.directories)
+        self.assertEqual(after.records, catalogue.records)
+        for path, record in catalogue.files.items():
+            other = after.files[path]
+            self.assertEqual((record.kind, record.offset, record.stored_size, record.size),
+                             (other.kind, other.offset, other.stored_size, other.size), path)
+        # The read-only reader parses the re-encoded catalogue the same way.
+        volume = require_pycdlib(self)
+        theirs = volume.parse_catalogue(rebuilt, volume.VOLUME_SIZE)
+        self.assertEqual(sorted(theirs.files), sorted(catalogue.files))
+        for path, record in catalogue.files.items():
+            other = theirs.files[path]
+            self.assertEqual((record.kind, record.offset, record.stored_size, record.size),
+                             (other.kind, other.offset, other.stored_size, other.size), path)
 
     def test_unchanged_payload_as_explicit_replacement_is_byte_identical(self):
         with ISO_PATH.open("rb") as stream:
@@ -329,6 +529,89 @@ class RealDiscTests(unittest.TestCase):
         self.assertTrue(entry.reused_stored)
         self.assertTrue(report.identical)
         self.assertEqual(written, self.source_sha256)
+
+    def uncompressed_table(self):
+        with ISO_PATH.open("rb") as stream:
+            catalogue = writer.read_catalogue(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+            record = catalogue.files[GENERIC_CAR]
+            stored = writer.read_at(stream, writer.VOLUME_OFFSET + record.offset,
+                                    record.stored_size, writer.VOLUME_OFFSET + writer.VOLUME_SIZE)
+            decoded = writer.decode_payload(stored, record.kind, record.size)
+        self.assertEqual(len(decoded), GENERIC_CAR_DECODED)
+        table = gt4_specdb.parse_table(decoded)
+        written = gt4_specdb.write_table(table)
+        self.assertEqual(len(written), GENERIC_CAR_UNCOMPRESSED)
+        return written
+
+    def test_resized_specdb_table_end_to_end(self):
+        table = self.uncompressed_table()
+        temporary = None
+        if REBUILT_ISO:
+            rebuilt = Path(REBUILT_ISO)
+            self.assertTrue(rebuilt.is_file(), "GT4_REBUILT_ISO must name the built image")
+        else:
+            temporary = tempfile.TemporaryDirectory()
+            rebuilt = Path(temporary.name) / "gt4-rebuilt.iso"
+            writer.rewrite_iso(ISO_PATH, rebuilt, {GENERIC_CAR: table})
+        try:
+            self.verify_rebuilt_iso(rebuilt, table)
+        finally:
+            if temporary is not None:
+                temporary.cleanup()
+
+    def verify_rebuilt_iso(self, rebuilt, table):
+        self.assertEqual(rebuilt.stat().st_size, ISO_PATH.stat().st_size)
+        with ISO_PATH.open("rb") as left, rebuilt.open("rb") as right:
+            source = writer.read_catalogue(left, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+            built = writer.read_catalogue(right, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+            self.assertEqual(sorted(built.files), sorted(source.files))
+            self.assertEqual(len(built.files), 18_352)
+            self.assertEqual(built.data_start, source.data_start)
+            self.assertEqual(built.physical_pages, source.physical_pages)
+            self.assertNotEqual(built.stored_sha256, source.stored_sha256)
+            replaced = built.files[GENERIC_CAR]
+            self.assertEqual((replaced.kind, replaced.size), (2, len(table)))
+            decoded = writer.decode_payload(
+                writer.read_at(right, writer.VOLUME_OFFSET + replaced.offset,
+                               replaced.stored_size, writer.VOLUME_OFFSET + writer.VOLUME_SIZE),
+                replaced.kind, replaced.size)
+            self.assertEqual(decoded, table)
+            parsed = gt4_specdb.parse_table(decoded)
+            self.assertEqual((parsed.row_count, parsed.row_length), (722, 24))
+            row = next(row for row in parsed.rows if row.row_id == 59)
+            self.assertEqual(row.data.hex(), GENERIC_CAR_ROW_59)
+            for path, record in source.files.items():
+                if path == GENERIC_CAR:
+                    continue
+                mine = built.files[path]
+                self.assertEqual((mine.kind, mine.size), (record.kind, record.size), path)
+                self.assertEqual(mine.stored_size, record.stored_size, path)
+                before = writer.read_at(left, writer.VOLUME_OFFSET + record.offset,
+                                        record.stored_size,
+                                        writer.VOLUME_OFFSET + writer.VOLUME_SIZE)
+                after = writer.read_at(right, writer.VOLUME_OFFSET + mine.offset,
+                                       mine.stored_size,
+                                       writer.VOLUME_OFFSET + writer.VOLUME_SIZE)
+                self.assertEqual(hashlib.sha256(before).digest(),
+                                 hashlib.sha256(after).digest(), path)
+                if record.stored_size <= writer.FILE_CAP:
+                    self.assertEqual(
+                        writer.decode_payload(after, mine.kind, mine.size),
+                        writer.decode_payload(before, record.kind, record.size), path)
+        try:
+            import gt4_volume
+        except ImportError:
+            return
+        # The read-only reader opens the rebuilt image through its own path.
+        with gt4_volume.rebuilt_volume(rebuilt) as stream:
+            theirs = gt4_volume.read_catalogue(stream, pinned=False)
+        self.assertEqual(sorted(theirs.files), sorted(source.files))
+        for path, record in source.files.items():
+            if path == GENERIC_CAR:
+                continue
+            other = theirs.files[path]
+            self.assertEqual((record.kind, record.offset, record.stored_size, record.size),
+                             (other.kind, other.offset, other.stored_size, other.size), path)
 
 
 if __name__ == "__main__":

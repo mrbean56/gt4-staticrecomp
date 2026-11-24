@@ -88,6 +88,20 @@ verified against the recorded oracle (`ka_01` row 59 → name index 84, slice 12
 eleven variation rows) and every table round-trips through the uncompressed writer with
 identical rows, so the encoder is a fallback, not a prerequisite.
 
+Milestone A3 (2026-11-24) makes one entry's decoded size change. The volume writer
+re-encodes the catalogue from its decoded pages (header, XOR offset table, page
+headers/tables/keys/metadata), keeps each allocated page count and the volume extent,
+and re-frames a replacement with the entry's own kind; entries it does not replace
+keep their bytes and their offsets unless a grown neighbour needs the space. Evidence:
+`specdb/GT4_US2560/GENERIC_CAR.dbt` rebuilt as its 23,120-byte uncompressed table
+(shipped entry 17,960 decoded) yields an image where all 18,352 paths enumerate, the
+other 18,351 entries are byte-identical, and the table reads back as 722 rows with the
+recorded row 59. The rebuilt image is `/tmp/opencode/gt4-rebuilt.iso` for the owner's
+test. Whether the game accepts a rebuilt volume, and whether a catalogue whose stored
+page sizes differ from the shipped ones loads, is still **Unknown**; that test is the
+gate. Details and the two limits (catalogue allocation cannot grow, entry storage kind
+cannot change) are in [the volume reader document](VOLUME-READER.md).
+
 Milestones: decode every `GT4_US2560` table (oracle: `ka_01` row 59 carries name index
 84, `CAR_VARIATION` row 444/table 42, model index 1598 — slice 120/121 evidence); write
 a table back and reload it with identical rows; rebuild `GT4.VOL` with only that table

@@ -3450,6 +3450,19 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
 - Milestone A1 is done (2026-11-24): `scripts/gt4_specdb.py` and `tests/python/test_gt4_specdb.py`, 15 controls,
   13 synthetic plus 2 real-disc ones behind `GT4_SPECDB_ASSETS`. The four extracted tables and `VARIATION` decode,
   `ka_01` gives name index 84 and "Ford Ka `01", and every table round-trips through the writer with identical rows.
+- Milestone A2 is done (2026-11-24): `scripts/gt4_volume_write.py` reproduces the 2,459,502,592-byte
+  GT4.VOL region byte for byte (SHA-256 `49f1a67a…3688e1c`) and replaces an entry's payload at its
+  recorded stored size; any size change was refused.
+- Milestone A3 is done (2026-11-24): the writer re-encodes the catalogue from its decoded pages
+  (header, XOR offset table, page headers, entries, `data_page` and sizes), re-reads identically for
+  all 407 pages / 18,352 paths, and accepts a replacement whose decoded size changes. CLI:
+  `gt4_volume_write.py --iso IN --output OUT --replace PATH=FILE` copies the ISO. Evidence: the
+  uncompressed `specdb/GT4_US2560/GENERIC_CAR.dbt` (23,120 bytes decoded vs 17,960 shipped) in a rebuilt
+  5,314,478,080-byte image; the other 18,351 entries are byte-identical, the table reads back as 722 rows
+  of 24, row 59 `b00a0000…`. Limits: the catalogue allocation (179 pages) and the volume extent cannot
+  grow, and an entry's storage kind cannot change. Tests: 20 synthetic controls plus 5 real-disc ones
+  behind `GT4_ISO` (`GT4_REBUILT_ISO` verifies a prebuilt image). The owner's in-game test of the rebuilt
+  image gates whether the game accepts it.
 - Acceptance: Python fixtures for the reader, the round trip and a synthetic table; the real disc as an optional
   input; owner test in game (the car appears in the dealer/garage and drives). No native rebuild.
 - Limits: a row-level car has its own specs but an existing body, paint set and wheels.
