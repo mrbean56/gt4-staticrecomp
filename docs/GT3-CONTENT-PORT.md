@@ -76,9 +76,17 @@ A trim GT3 car that matches an existing GT4 body (Evo VI T.M.E., 1999 Lancer, 32
 is therefore a row-level addition: a new row ID with the right name and the existing
 model code. No geometry, no textures, no model converter.
 
-Unlocking fact: a `GTDB` table may be stored **uncompressed** (version flag `0x01`),
-which the game accepts, so a writer needs the Huffman *decoder* and never an encoder.
-`GENERIC_CAR` is 722 × 24 B = 17 KB; the whole USA database is a few hundred KB.
+What the disc says about the format (TASK-216 milestone 1, 2026-11-24): a row is a
+*stream*, not a compressed byte run. It starts with a symbol count; count one copies a
+row from a 64-row block pool, a larger count patches a template row (the first symbol
+holds the template index in its low six bits, then a byte mask and the replacement
+bytes). Huffman codes are LSB-first through a 256-entry prefix table plus a code list.
+Every shipped table has version `0x00080001`/`0x00080003` and is still compressed, so
+the public "bit `0x01` means uncompressed" reading does not hold here: whether the game
+accepts an uncompressed table is **Unknown** until it is tried in game. The reader is
+verified against the recorded oracle (`ka_01` row 59 → name index 84, slice 121's
+eleven variation rows) and every table round-trips through the uncompressed writer with
+identical rows, so the encoder is a fallback, not a prerequisite.
 
 Milestones: decode every `GT4_US2560` table (oracle: `ka_01` row 59 carries name index
 84, `CAR_VARIATION` row 444/table 42, model index 1598 — slice 120/121 evidence); write

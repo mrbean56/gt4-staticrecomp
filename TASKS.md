@@ -3438,13 +3438,18 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
 - Read every `GT4_US2560` table (`GTDB` rows through the Huffman dictionary, `GTID` labels, `GTST` strings).
   Oracle from slices 120/121: `ka_01` is row 59 with name index 84, `CAR_VARIATION` row 444 of table 42, model
   index 1598 in `american_StrDB.sdb`.
-- Write a table back with the documented uncompressed flag (`version | 1`), reload it and compare every row, so no
-  Huffman *encoder* is ever needed.
+- Write a table back in the uncompressed layout, reload it and compare every row. The public "flag `0x01` means
+  uncompressed" reading is wrong for this build (every shipped table sets it and is still compressed), so the
+  game's acceptance of the written form is Unknown until milestone A3 tries it in game; the encoder we would need
+  otherwise is a patch/template stream, already decoded byte for byte.
 - Rebuild `GT4.VOL` with only that table changed and confirm every other entry is byte-identical.
 - Add one trim car of the target list to `GENERIC_CAR`, `CAR_NAME_american` and `CAR_VARIATION_american`, pointing
   at an existing model code: Mitsubishi Lancer Evolution VI GSR T.M.E. on the Evolution VI GSR body is the first
   candidate. It is the cheapest experiment that answers whether the menus and the save system enumerate cars from
   the SpecDB at runtime (Unknown today).
+- Milestone A1 is done (2026-11-24): `scripts/gt4_specdb.py` and `tests/python/test_gt4_specdb.py`, 15 controls,
+  13 synthetic plus 2 real-disc ones behind `GT4_SPECDB_ASSETS`. The four extracted tables and `VARIATION` decode,
+  `ka_01` gives name index 84 and "Ford Ka `01", and every table round-trips through the writer with identical rows.
 - Acceptance: Python fixtures for the reader, the round trip and a synthetic table; the real disc as an optional
   input; owner test in game (the car appears in the dealer/garage and drives). No native rebuild.
 - Limits: a row-level car has its own specs but an existing body, paint set and wheels.
