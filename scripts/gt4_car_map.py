@@ -30,6 +30,7 @@ import collections
 import json
 from pathlib import Path
 import re
+import struct
 
 import gt4_specdb
 import gt4_volume
@@ -99,6 +100,39 @@ def car_rows(tables, code: str) -> dict[str, list[tuple[str, int, bytes]]]:
     return found
 
 
+def car_catalogue(iso_path: Path) -> list[dict]:
+    """Return every car's code, display name and model code, in label order."""
+    with gt4_volume.rebuilt_volume(iso_path) as stream:
+        catalogue = gt4_volume.read_catalogue(stream, pinned=False)
+
+        def table(name):
+            return gt4_specdb.parse_table(_payload(stream, catalogue, name + ".dbt"))
+
+        def labels(name):
+            return gt4_specdb.parse_labels(_payload(stream, catalogue, name + ".idi"))
+
+        strings = gt4_specdb.parse_strings(_payload(stream, catalogue, "american_StrDB.sdb"))
+        name_row = {label.name: label.row_id for label in labels("CAR_NAME_american")}
+        name_index = {row.row_id: struct.unpack_from("<I", row.data, 0)[0]
+                      for row in table("CAR_NAME_american").rows}
+        variation = {row.row_id: struct.unpack_from("<I", row.data, 0)[0]
+                     for row in table("CAR_VARIATION_american").rows}
+        model_index = {row.row_id: struct.unpack_from("<I", row.data, 0)[0]
+                       for row in table("VARIATIONamerican").rows}
+        cars = []
+        for label in labels("GENERIC_CAR"):
+            require(label.name in name_row, "no CAR_NAME row for " + label.name)
+            require(label.row_id in variation, "no CAR_VARIATION row for " + label.name)
+            variation_row = variation[label.row_id]
+            require(variation_row in model_index, "no VARIATION row for " + label.name)
+            cars.append({
+                "code": label.name,
+                "name": strings[name_index[name_row[label.name]]],
+                "model": strings[model_index[variation_row]],
+            })
+    return cars
+
+
 def describe(tables, code: str) -> dict:
     found = car_rows(tables, code)
     groups = collections.Counter()
@@ -118,10 +152,16 @@ def describe(tables, code: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iso", type=Path, required=True)
-    parser.add_argument("--car", required=True)
+    parser.add_argument("--car")
+    parser.add_argument("--catalog", action="store_true",
+                        help="list every car's code, name and model code")
     arguments = parser.parse_args(argv)
-    tables = read_specdb(arguments.iso)
-    report = describe(tables, arguments.car)
+    if arguments.catalog:
+        for car in car_catalogue(arguments.iso):
+            print(json.dumps(car))
+        return 0
+    require(arguments.car is not None, "--car is required unless --catalog is given")
+    report = describe(read_specdb(arguments.iso), arguments.car)
     require(report["rows"], "no table carries a row for that code")
     print(json.dumps(report, indent=2))
     return 0

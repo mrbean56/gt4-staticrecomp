@@ -117,8 +117,11 @@ same shape: read the GT4 format, write it back byte-identically, then change one
 
 A GT4 car is a `GENERIC_CAR` row + a `CAR_NAME_american` row + a `CAR_VARIATION` row
 pointing at a `VARIATION` row whose model-code string index names an existing
-`car/menu/<code>` and `car/lod/<code>` pair. Slice 121 confirms 11 physical variations
-share one model, so several cars already reuse one body.
+`car/menu/<code>` and `car/lod/<code>` pair. Measured on the owner's disc (2026-11-24,
+`gt4_car_map.car_catalogue`): **722 cars, 722 distinct model codes, 3,849 variation rows** —
+one model per car and up to 31 paint variants on it (`dodg0007`), so no two cars share a
+model by their default variation. A row-level port therefore *copies* a donor car's model
+code rather than pointing at a shared one, and what it inherits is that donor's art.
 
 A trim GT3 car that matches an existing GT4 body (Evo VI T.M.E., 1999 Lancer, 328ci)
 is therefore a row-level addition: a new row ID with the right name and the existing

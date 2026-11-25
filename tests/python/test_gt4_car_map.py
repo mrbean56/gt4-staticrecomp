@@ -50,6 +50,14 @@ class RealDiscTests(unittest.TestCase):
         self.assertEqual(report["by_table"]["ENGINE"], ["en_ka_01_a"])
         self.assertEqual(len(report["by_table"]["GEAR"]), 4)
 
+    def test_catalogue_names_and_models(self):
+        cars = car_map.car_catalogue(ISO)
+        self.assertEqual(len(cars), 722)
+        ka = next(car for car in cars if car["code"] == "ka_01")
+        self.assertEqual(ka, {"code": "ka_01", "name": "Ford Ka `01", "model": "fdeu0006"})
+        self.assertEqual(len({car["model"] for car in cars}), 722)
+        self.assertTrue(all(car["name"] and car["model"] for car in cars))
+
     def test_an_unknown_code_has_no_rows(self):
         report = car_map.describe(self.tables, "zz_99")
         self.assertEqual((report["rows"], report["tables"]), (0, 0))
