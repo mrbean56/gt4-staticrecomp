@@ -379,11 +379,20 @@ def write_labels(labels: LabelTable) -> bytes:
     return header + key_bytes + bytes(area)
 
 
-def parse_strings(data: bytes) -> list[str]:
+class StringTable(list):
+    """GTST strings with the header fields the writer must keep."""
+
+    def __init__(self, strings: list[str], flags: int = 1, reserved: int = 0) -> None:
+        super().__init__(strings)
+        self.flags = flags
+        self.reserved = reserved
+
+
+def parse_strings(data: bytes) -> StringTable:
     """Parse a GTST string table; offsets are relative to the string area."""
     require(len(data) >= HEADER_SIZE, "GTST header is truncated")
     require(data[:4] == GTST_MAGIC, "GTST magic mismatch")
-    count, _, _ = struct.unpack_from("<III", data, 4)
+    count, flags, reserved = struct.unpack_from("<III", data, 4)
     require(count <= MAX_STRINGS, "GTST string count out of range")
     strings_start = HEADER_SIZE + count * 4
     require(strings_start <= len(data), "GTST offset table exceeds file")
@@ -397,6 +406,25 @@ def parse_strings(data: bytes) -> list[str]:
         raw = data[position + 2 : position + 2 + length]
         require(raw[-1] == 0, "GTST string is not NUL-terminated")
         strings.append(raw[:-1].decode("latin-1"))
+    return StringTable(strings, flags, reserved)
+
+
+def write_strings(strings: StringTable) -> bytes:
+    """Write a GTST table: offsets relative to the string area, NUL-terminated and even-aligned."""
+    count = len(strings)
+    require(count <= MAX_STRINGS, "GTST string count out of range")
+    area = bytearray()
+    offsets = []
+    for value in strings:
+        offsets.append(len(area))
+        raw = value.encode("latin-1") + b"\x00"
+        require(1 <= len(raw) <= MAX_ROW_LENGTH, "GTST string length out of range")
+        area += struct.pack("<H", len(raw)) + raw
+        if len(area) % 2:
+            area += b"\x00"
+    header = struct.pack("<4sIII", GTST_MAGIC, count,
+                         getattr(strings, "flags", 1), getattr(strings, "reserved", 0))
+    return header + b"".join(struct.pack("<I", offset) for offset in offsets) + bytes(area)
     return strings
 
 

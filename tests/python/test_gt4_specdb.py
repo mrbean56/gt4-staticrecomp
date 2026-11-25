@@ -340,3 +340,20 @@ class EveryTableTests(unittest.TestCase):
                                  [row.data for row in again.rows], path)
                 self.assertEqual([row.row_id for row in table.rows],
                                  [row.row_id for row in again.rows], path)
+
+    def test_all_10_shipped_string_tables_are_byte_identical(self):
+        import gt4_volume
+
+        with gt4_volume.verified_volume(ISO) as stream:
+            catalogue = gt4_volume.read_catalogue(stream)
+            paths = sorted(path for path in catalogue.files
+                           if path.startswith("specdb/") and path.endswith(".sdb"))
+            self.assertEqual(len(paths), 10)
+            for path in paths:
+                record = catalogue.files[path]
+                raw = gt4_volume.read_at(
+                    stream, gt4_volume.VOLUME_OFFSET + record.offset, record.stored_size,
+                    gt4_volume.VOLUME_OFFSET + gt4_volume.VOLUME_SIZE)
+                data = gt4_volume.decode_payload(raw, record.kind, record.size)
+                strings = specdb.parse_strings(data)
+                self.assertEqual(specdb.write_strings(strings), data, path)

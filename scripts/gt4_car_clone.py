@@ -24,13 +24,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import struct
 
 import gt4_car_map
 import gt4_specdb
+import gt4_volume
 import gt4_volume_write
 
 SPECDB_PREFIX = "specdb/GT4_US2560/"
 MAX_CODE_LENGTH = 24
+LANGUAGES = ("american", "big5", "british", "french", "german", "italian",
+             "japanese", "korean", "spanish")
 
 
 class CloneError(ValueError):
@@ -40,6 +44,21 @@ class CloneError(ValueError):
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise CloneError(message)
+
+
+def read_strings(iso_path: Path) -> dict[str, gt4_specdb.StringTable]:
+    """Return every language's name table, keyed by language."""
+    tables = {}
+    with gt4_volume.rebuilt_volume(iso_path) as stream:
+        catalogue = gt4_volume.read_catalogue(stream, pinned=False)
+        for language in LANGUAGES:
+            record = catalogue.files[SPECDB_PREFIX + language + "_StrDB.sdb"]
+            raw = gt4_volume.read_at(
+                stream, gt4_volume.VOLUME_OFFSET + record.offset, record.stored_size,
+                gt4_volume.VOLUME_OFFSET + gt4_volume.VOLUME_SIZE)
+            tables[language] = gt4_specdb.parse_strings(
+                gt4_volume.decode_payload(raw, record.kind, record.size))
+    return tables
 
 
 def car_owned(label: str, code: str) -> bool:
@@ -80,25 +99,42 @@ def plan_clone(tables, code: str, new_code: str,
     return plan
 
 
-def apply_clone(tables, plan: dict[str, list[tuple[str, int, int]]]) -> dict[str, bytes]:
-    """Return the replacement bytes of every changed row table and label table."""
+def apply_clone(tables, plan: dict[str, list[tuple[str, int, int]]],
+                name: str | None = None, strings=None) -> dict[str, bytes]:
+    """Return the replacement bytes of every changed row table, label table and name table."""
     replacements = {}
-    for name, entries in plan.items():
-        labels, table = tables[name]
+    name_index = {}
+    if name is not None:
+        require(strings is not None, "the string tables are required to name the clone")
+        require(0 < len(name) <= 200, "the clone name must be 1..200 characters")
+        for language in LANGUAGES:
+            table = gt4_specdb.StringTable(list(strings[language]),
+                                           strings[language].flags, strings[language].reserved)
+            table.append(name)
+            name_index[language] = len(table) - 1
+            replacements[SPECDB_PREFIX + language + "_StrDB.sdb"] = \
+                gt4_specdb.write_strings(table)
+    for name_table, entries in plan.items():
+        labels, table = tables[name_table]
         rows = sorted((row.row_id, row.data) for row in table.rows)
         for new_label, source_row, new_row in entries:
             require(any(row_id == source_row for row_id, _ in rows),
-                    "the source row is absent from " + name)
-            rows.append((new_row, dict(rows)[source_row]))
+                    "the source row is absent from " + name_table)
+            data = dict(rows)[source_row]
+            if name_index and name_table.startswith("CAR_NAME_"):
+                index = name_index.get(name_table[len("CAR_NAME_"):])
+                if index is not None:
+                    data = struct.pack("<III", index, index, index) + data[12:]
+            rows.append((new_row, data))
         rows.sort()
         rewritten = gt4_specdb.Table(
             row_count=len(rows), row_length=table.row_length, compressed=True,
             version=table.version,
             rows=[gt4_specdb.Row(row_id, data) for row_id, data in rows])
-        replacements[SPECDB_PREFIX + name + ".dbt"] = gt4_specdb.write_table(rewritten)
+        replacements[SPECDB_PREFIX + name_table + ".dbt"] = gt4_specdb.write_table(rewritten)
         new_labels = gt4_specdb.LabelTable(labels.table_id, list(labels), labels.flags)
         new_labels.extend(gt4_specdb.Label(label, row_id) for label, _, row_id in entries)
-        replacements[SPECDB_PREFIX + name + ".idi"] = gt4_specdb.write_labels(new_labels)
+        replacements[SPECDB_PREFIX + name_table + ".idi"] = gt4_specdb.write_labels(new_labels)
     return replacements
 
 
@@ -112,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="print the plan without writing an image")
     parser.add_argument("--include-scoped", action="store_true",
                         help="also clone the class and event rows")
+    parser.add_argument("--name", help="give the clone its own name in every language table")
     arguments = parser.parse_args(argv)
     tables = gt4_car_map.read_specdb(arguments.iso)
     plan = plan_clone(tables, arguments.car, arguments.new_code, arguments.include_scoped)
@@ -120,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         "new_code": arguments.new_code,
         "tables": len(plan),
         "rows": sum(len(entries) for entries in plan.values()),
+        "name": arguments.name,
         "by_table": {name: [label for label, _, _ in entries]
                      for name, entries in plan.items()},
     }
@@ -128,7 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     require(arguments.output is not None, "--output is required unless --plan is given")
     require(not arguments.output.exists(), "output already exists")
-    replacements = apply_clone(tables, plan)
+    strings = read_strings(arguments.iso) if arguments.name else None
+    replacements = apply_clone(tables, plan, arguments.name, strings)
     written = gt4_volume_write.rewrite_iso(arguments.iso, arguments.output, replacements)
     report["written_sha256"] = written.written_sha256
     report["replaced_entries"] = len(replacements)

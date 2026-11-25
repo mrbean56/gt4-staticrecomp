@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import struct
 import sys
 import unittest
 
@@ -57,6 +58,29 @@ class RealDiscTests(unittest.TestCase):
         with self.assertRaises(car_clone.CloneError):
             car_clone.plan_clone(self.tables, "ka_01", "ka_01")
 
+    def test_a_named_clone_appends_one_string_per_language(self):
+        plan = car_clone.plan_clone(self.tables, "ka_01", "xa_98")
+        strings = car_clone.read_strings(ISO)
+        replacements = car_clone.apply_clone(self.tables, plan, "Ford Ka `01 Clone", strings)
+        self.assertEqual(len(replacements), 91)
+        for language in car_clone.LANGUAGES:
+            table = specdb.parse_strings(
+                replacements[car_clone.SPECDB_PREFIX + language + "_StrDB.sdb"])
+            self.assertEqual(table[-1], "Ford Ka `01 Clone", language)
+            self.assertEqual(len(table), len(strings[language]) + 1, language)
+            rows = specdb.parse_table(
+                replacements[car_clone.SPECDB_PREFIX + "CAR_NAME_" + language + ".dbt"])
+            labels = specdb.parse_labels(
+                replacements[car_clone.SPECDB_PREFIX + "CAR_NAME_" + language + ".idi"])
+            clone = next(label for label in labels if label.name == "xa_98")
+            donor = next(label for label in self.tables["CAR_NAME_" + language][0]
+                         if label.name == "ka_01")
+            data = next(row.data for row in rows.rows if row.row_id == clone.row_id)
+            original = next(row.data for row in self.tables["CAR_NAME_" + language][1].rows
+                            if row.row_id == donor.row_id)
+            self.assertEqual(struct.unpack_from("<III", data, 0), (len(table) - 1,) * 3, language)
+            self.assertEqual(data[12:], original[12:], language)
+
     def test_the_written_tables_carry_one_extra_linked_row(self):
         plan = car_clone.plan_clone(self.tables, "ka_01", "xa_99")
         replacements = car_clone.apply_clone(self.tables, plan)
@@ -93,4 +117,12 @@ class RebuiltCloneTests(unittest.TestCase):
         for name, hits in clone.items():
             source = {label.replace("xa_99", "ka_01"): data for label, _, data in donor[name]}
             for label, _, data in hits:
-                self.assertEqual(data, source[label.replace("xa_99", "ka_01")], name)
+                original = source[label.replace("xa_99", "ka_01")]
+                if name.startswith("CAR_NAME_"):
+                    # A named clone keeps the donor's row but points at its own string.
+                    self.assertEqual(data[12:], original[12:], name)
+                    language = name[len("CAR_NAME_"):]
+                    strings = car_clone.read_strings(IMAGE)[language]
+                    self.assertEqual(struct.unpack_from("<I", data, 0)[0], len(strings) - 1, name)
+                else:
+                    self.assertEqual(data, original, name)
