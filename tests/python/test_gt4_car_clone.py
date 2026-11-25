@@ -77,3 +77,20 @@ class RealDiscTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+IMAGE = Path(os.environ.get("GT4_CLONE_IMAGE", ""))
+
+
+@unittest.skipUnless(IMAGE.is_file(), "set GT4_CLONE_IMAGE to an image built by this tool")
+class RebuiltCloneTests(unittest.TestCase):
+    def test_the_built_image_carries_the_cloned_set(self):
+        tables = car_clone.gt4_car_map.read_specdb(IMAGE)
+        report = car_clone.gt4_car_map.describe(tables, "xa_99")
+        self.assertEqual((report["rows"], report["tables"]), (87, 41))
+        donor = car_clone.gt4_car_map.car_rows(tables, "ka_01")
+        clone = car_clone.gt4_car_map.car_rows(tables, "xa_99")
+        for name, hits in clone.items():
+            source = {label.replace("xa_99", "ka_01"): data for label, _, data in donor[name]}
+            for label, _, data in hits:
+                self.assertEqual(data, source[label.replace("xa_99", "ka_01")], name)

@@ -270,6 +270,10 @@ builds and tests serially.
   slice 114 binaries and two tests fail):
   `GT4_NATIVE_BUILD=<build dir> private/tooling-venv/Scripts/python.exe -m unittest discover -s tests/python`;
   one module: `... -m unittest discover -s tests/python -p test_pacing_launcher.py`
+  The disc tooling controls (`tests/python/test_gt4_*.py`) take `GT4_ISO`, and the writer
+  controls build a 2.4 GB volume in the temp directory: set `TMPDIR` to a disk-backed path
+  when `/tmp` is a small tmpfs. `test_gt4_volume_write.RealDiscTests` fails with
+  `OSError: [Errno 28]` otherwise.
 - Launch: `private\tooling-venv\Scripts\python.exe scripts\play_performance.py --assets-root C:\Antigravity\gt4-staticrecomp --mode pacing`
   (modes map to pinned manifests: `vu1-aot`, `gs-async`, `pacing`, `vu1-record`;
   options `--vu1-verify N`, `--vu1-interpret-only`; env `GT4_PACING=audio`,
