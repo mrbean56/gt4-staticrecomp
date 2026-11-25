@@ -86,6 +86,19 @@ event entries), so **adding a trim car is a label clone**: copy a donor car's 87
 under the new code, append them with new row ids, and copy the 8 class/event rows only if the
 new car belongs to the same class and events.
 
+The GT3 side has the same shape, which is the good news for the port: GT3's `car` table (264 bytes,
+one row per car, dumped by `gt3tool db` as `30_car.csv`) is a row of **label references** —
+`br_s4_00_a`, `ch_s4_00_a`, `rm_s4_00_a`, `en_s4_00_a`, `tk_s4_00_a`, `dt_s4_00_a`, `cl_s4_00_a`,
+`ls_s4_00_a`, `ge_s4_00_a`, `su_s4_00_a`, `ft_s4_00_a`, `rt_s4_00_a` — with the same two-letter
+families and the same `<family>_<code>_<letter>` naming. A GT3 car therefore already arrives with
+its whole row set labelled, and the port's work is per-table column conversion between two
+databases that share the table taxonomy.
+
+`scripts/gt4_car_clone.py` does the GT4 side of that: a plan and the written rows for one donor car
+under a new code, with `--name` appending one string to each of the nine `<language>_StrDB.sdb`
+tables and pointing the cloned `CAR_NAME_*` rows at it (`write_strings` reproduces all ten shipped
+string tables byte for byte, Confirmed).
+
 Two format facts the clone depends on (Confirmed): the row tables are searched by row id, so a
 new row takes an id above that table's maximum and the row infos stay ascending; the label tables
 are in shipped car order, not sorted, so their new keys go at the end.

@@ -3459,8 +3459,11 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   (the game binary-searches them), so a new row takes an id above the table's maximum; label tables are in shipped
   car order and take new keys at the end.
 - Milestone A4 groundwork (2026-11-24): `scripts/gt4_car_clone.py` plans and applies a clone of a car's 87 car-owned
-  rows under a new code (41 tables), leaving the class and event rows alone, reusing the donor's strings so the
-  clone shows the donor's name. Six controls in `tests/python/test_gt4_car_clone.py`.
+  rows under a new code (41 tables), leaving the class and event rows alone. With `--name` it also appends one string
+  to each of the nine `<language>_StrDB.sdb` tables and points the cloned `CAR_NAME_*` rows at it; `write_strings`
+  reproduces all ten shipped string tables byte for byte (Confirmed). Eight controls in
+  `tests/python/test_gt4_car_clone.py`, one against a built image. Image `gt4-clone-xa99.iso` (SHA-256 `b59085f9…`):
+  91 entries change (41 row tables, 41 label tables, 9 name tables), `xa_99` = "Ford Ka `01 Clone".
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
