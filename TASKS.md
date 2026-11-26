@@ -3471,34 +3471,27 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
 - Milestone A4 in game (2026-11-26, Arcade, Ford Ka `01): the clone image boots, the car screen reads the donor
   correctly (`Type:FF`, 59 HP/5,000 rpm, 77.39 ft.lb/2,500 rpm — the earlier misread was the writer form), and races
   load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt.
-- **The clone's rows are written but the car is not listed.** In the rebuilt image `GENERIC_CAR` and
+- **The clone's rows landing is not enough** (2026-11-26, Confirmed in game). In the rebuilt image `GENERIC_CAR` and
   `CAR_VARIATION_american` go from 722 to 723 rows and `ARCADEINFO_NORMAL` from 721 to 722 (new row 1078, the donor's
-  fields), yet the Arcade Ford list still reports five cars and never shows "Ford Ka `01 Clone". So the row write
-  lands but no menu enumerates it: the list must come from a model, a code prefix or a compiled roster rather than
-  from these rows alone. The GT Mode dealer (below) does not list it either; TASK-217's real model is still the likely
-  missing half.
-- **A clone of a listed car still does not appear** (2026-11-26, Confirmed in game). `ka_01` cloned under `ka_02` with
-  its own name and its class/event rows (95 rows in 44 tables, `gt4-clone-ka2.iso`) leaves the Arcade Ford list at five
-  cars, so a car's rows alone never reach the menus.
-- **The roster is data after all: `projects/arcade/US_carlist.adc`.** A scan of the volume found the car codes inside
-  `projects/arcade/US_carlist.adc` (59 KB, `ADCH005`), `projects/gtmode/US_carlist.adc` (the dealer) and
-  `projects/boot/US_carlist.adc`: one list per maker (`ford_carlist`, `chevrolet_carlist`, …, 40+ makers), each a
-  u32 count followed by entries of `u32 object id, 0x1D, u16 length, car code`. Arcade's 240 cars and the dealer's
-  eight Ford new cars come from these lists, not from the SpecDB.
-- **Rewriting a code in that list crashes the game** (2026-11-26, Confirmed). Replacing the Ka's `ka_01` with `ka_02`
-  in `ford_carlist` (same length, no structural change; 92 to 98 entries replaced overall) makes the image halt right
-  after Start on a null call (`no translated code at 0x00000000`, `ra 0x0031C8A8`). The same clone without the list
-  edit reaches the car screen and shows Ford five cars, so the entry binds to more than the code string — an object id
-  or a table index inside the Adhoc container we have not decoded. `config/arcade_car.adc` is the `ArcadeCar` Adhoc
-  class (fields `car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`; methods
-  `isSelectable`, `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable`) and builds a `car_list` with `size`/`index`.
-  Next: decode the `ADCH005` container so a list entry can be appended and resolved.
-- **Menus take the name from the string DB and the roster from elsewhere** (2026-11-26, Confirmed in game). Renaming
-  `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" and setting `GENERIC_CAR` row 59's price to 17,040 makes the Arcade
-  Ford list show "Ford Ka ZZZ", so the display name is data. Membership is not: no `GT4_US2560` table has 240 rows
-  (`GENERIC_CAR` 722, `CAR_NAME_american` 804, `car/menu` 807 model files), and the three added rows changed neither
-  the Arcade count nor the dealer count. The roster is compiled or built from a table not yet identified, so adding a
-  car needs the executable half — the same build-side blocker as TASK-219's code half.
+  fields), and a clone of a listed car (`ka_02`, 95 rows in 44 tables) reaches the car screen, but neither the Arcade
+  Ford list nor the GT Mode dealer shows it.
+- **The roster is data: `projects/arcade/US_carlist.adc`.** One list per maker (`ford_carlist`, …), each a count and
+  entries of `u32 object id, 0x1D, u16 length, car code`; the dealer has its own `projects/gtmode/US_carlist.adc`,
+  and `projects/boot/US_carlist.adc` holds a flat 240-car `car_carlist`. **Confirmed in game** (`gt4-arcadelist-m3.iso`,
+  file SHA-256 `da39f8e7…`): replacing the Ka's `ka_01` with `m3_04` in `ford_carlist` (same length) shows the BMW
+  M3 '04 page under Ford with its own type, power and torque. The `Ford N cars` line is separate: a `*_carnum` script
+  object computes it, so it stayed at five.
+- **A car resolves as label → row id → `specdb/GT4_US2560/CARS/<row id>`** (2026-11-26, Confirmed in game). Renaming
+  the Ka's own label `ka_01` → `ka_02` in all 44 `.idi` label tables and the three car-list files (row ids, rows and
+  the `CARS/000000000000003B` entry untouched; image `gt4-row59-ka02.iso`, file SHA-256 `e84004f0…`) loads the Ford
+  page with `ka_02` and shows the Ka (`Type:FF`, 59 HP/5,000 rpm, 77.39 ft.lb/2,500 rpm).
+- **The clone's remaining difference is the missing CARS record** (High confidence). Its new row id (1078) has no
+  `CARS/` entry, where the working rename kept `CARS/000000000000003B`; a car without a record is what builds the null
+  object and makes the Adhoc VM jump to address 0 (`ra 0x0031C8A8`, inside `mJumpZero__execute`). The 804 shipped
+  `CARS/` entries are one per `CAR_NAME` row, keyed by the row id in hex.
+- **Next gate: write a CARS record and a catalogue entry** (TASK-222). The catalogue is a paged tree (407 pages, 401
+  leaves; a leaf key is a big-endian parent id plus the name). The 804 CARS entries sit in 42-entry leaves with
+  19 free bytes, so one more entry needs a leaf split; GT4.VOL has 468,952 bytes of slack for the 1.2 KB payload.
 - **A rebuilt table must carry its shipped GTDB version.** A probe script rebuilt `GENERIC_CAR` with the reader's
   default (`0x00010000` instead of `0x00080001`); that image booted into the menus but the process exited during the
   session (not isolated). `write_table(..., compressed=True)` now refuses any version outside `0x00080001`/`0x00080003`.
@@ -3662,3 +3655,20 @@ usable and is where the licensing question disappears.
 - A player without a GT3 image gets the reference game; the conversion is skipped, not faked.
 - Gates: conversion is deterministic (same two images give the same output hashes), the reference game is untouched
   when conversion is skipped, and every converted car or circuit passes the pipeline that produced it.
+
+### TASK-222 — CARS records and catalogue entries (📋 Planned, Python only)
+
+The gate between "a row set" and "a car the menus can build" (TASK-216, 2026-11-26). `specdb/GT4_US2560/CARS/<row id>`
+is the per-car record the Adhoc `MCarData` natives read; a label that points at a row id without one makes the menu
+build a null car and the VM jump to address 0. The 804 shipped records are one per `CAR_NAME` row, keyed by the row id
+in hex, about 1.2 KB each.
+- Decode one CARS record: a count plus 73 eight-byte pairs for the Ka (two blocks of the same size), with entries
+  shared between different cars; name the fields by matching the car's labels and row ids.
+- Generate a record for a new row set (the clone's ids first) and read it back with a synthetic control.
+- Insert a catalogue entry: a leaf key is a big-endian parent id plus the record name. The CARS leaves are full
+  (42 entries, 19 free bytes), so the writer needs a leaf split and the parent index update; the payload fits the
+  468,952-byte GT4.VOL slack.
+- Prove in game: the `ka_02` clone (95 rows, its own name) with a generated CARS record and a `ford_carlist` entry
+  opens the Ford page, shows "Ford Ka `01 Clone" and races; the same image without the record still crashes.
+- Never weaken the writer's refusal of a catalogue that outgrows its allocation; the split must fit the existing
+  physical-page budget in the header.

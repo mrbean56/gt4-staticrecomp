@@ -25,21 +25,24 @@ Ford Ka `01.
   722 → 723, `ARCADEINFO_NORMAL` 721 → 722) yet the Arcade Ford list still reports five cars and shows no clone: the
   menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), and the dealer
   does not list it either (next bullet); TASK-217's real model is the likely missing half.
-- **The roster is data: `projects/<mode>/US_carlist.adc`.** The volume scan found the car codes in
-  `projects/arcade/US_carlist.adc` (59 KB), `projects/gtmode/US_carlist.adc` and `projects/boot/US_carlist.adc`: one
-  list per maker, each a count followed by `u32 object id, 0x1D, u16 length, car code` entries. Arcade's 240 and the
-  dealer's eight Fords come from these lists. A car's rows alone still never reach them: `ka_01` cloned as `ka_02`
-  with its class rows (95 rows) leaves Ford at five.
-- **Rewriting a code in the list crashes the game** (`ra 0x0031C8A8`, same null call shape). Swapping the Ka's code
-  for the clone's in `ford_carlist` halts the image right after Start, while the clone alone reaches the car screen,
-  so an entry binds to an object id or table index we have not decoded. `config/arcade_car.adc` is the `ArcadeCar`
-  Adhoc class that builds `car_list` from these entries.
-- **Menus read the name from the string DB, the roster from code.** Renaming `american_StrDB.sdb` string 84 to
-  "Ford Ka ZZZ" (with row 59's price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name
-  is data, unlike membership. No `GT4_US2560` table has the roster's 240 rows (`GENERIC_CAR` 722,
-  `CAR_NAME_american` 804, `car/menu` 807 model files), and neither the Arcade count (Ford 5) nor the GT Mode dealer
-  changed when the clone added rows. The roster is compiled or built from an unidentified table: both the car add and
-  the 24-car field now wait on the same Windows build.
+- **The roster is data: `projects/<mode>/US_carlist.adc`.** One list per maker (`ford_carlist`, …), each a count and
+  `u32 object id, 0x1D, u16 length, car code` entries; the dealer has its own file and `projects/boot/US_carlist.adc`
+  holds a flat 240-car `car_carlist`. **Confirmed in game** (`gt4-arcadelist-m3.iso`, file SHA-256 `da39f8e7…`): the
+  Ka's code replaced by `m3_04` in `ford_carlist` shows the BMW M3 '04 page under Ford, with its own data. The
+  `Ford N cars` line is a separate `*_carnum` script object, so it stayed at five.
+- **A car is label → row id → `specdb/GT4_US2560/CARS/<row id>`.** Renaming the Ka's own label `ka_01` → `ka_02` in
+  all 44 `.idi` tables and the three car-list files, leaving every row and the `CARS/000000000000003B` entry alone
+  (`gt4-row59-ka02.iso`, file SHA-256 `e84004f0…`), loads and shows the Ka (`Type:FF`, 59 HP/5,000 rpm). So the
+  per-car CARS record is what the menus build the car from. The clone's new row id (1078) has none, which is the
+  remaining difference (High confidence) and makes a listed clone build a null car and jump to address 0
+  (`ra 0x0031C8A8`, `mJumpZero__execute`).
+- **Next gate (TASK-222): write a CARS record and insert a catalogue entry.** The catalogue is a paged tree (407
+  pages, 401 leaves, big-endian parent id + name keys); the 804 CARS entries fill 42-entry leaves with 19 bytes free,
+  so one more needs a leaf split. GT4.VOL has 468,952 bytes of slack for the ~1.2 KB payload.
+- **Menus read the name from the string DB.** Renaming `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" (with row 59's
+  price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name is data.
+- **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American
+  Showroom → Ford → New Cars list shows eight cars (Ka `01 at Cr. 12,920 first) and no clone.
 - **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American
   Showroom → Ford → New Cars list shows eight cars (Ka `01 at Cr. 12,920 first) and no clone.
 - **TASK-218: containers and the `.ad` polylines are decoded.** `scripts/gt4_course.py` reads and writes the layout

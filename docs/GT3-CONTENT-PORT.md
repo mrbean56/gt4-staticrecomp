@@ -117,7 +117,10 @@ same shape: read the GT4 format, write it back byte-identically, then change one
 
 A GT4 car is a `GENERIC_CAR` row + a `CAR_NAME_american` row + a `CAR_VARIATION` row
 pointing at a `VARIATION` row whose model-code string index names an existing
-`car/menu/<code>` and `car/lod/<code>` pair. Measured on the owner's disc (2026-11-24,
+`car/menu/<code>` and `car/lod/<code>` pair, plus a per-car index record at
+`specdb/GT4_US2560/CARS/<row id>` (confirmed in game 2026-11-26: the Adhoc `MCarData`
+natives resolve a code label to its row id and load this record; a label whose row id has
+no record builds a null car and the VM jumps to address 0). Measured on the owner's disc (2026-11-24,
 `gt4_car_map.car_catalogue`): **722 cars, 722 distinct model codes, 3,849 variation rows** —
 one model per car and up to 31 paint variants on it (`dodg0007`), so no two cars share a
 model by their default variation. A row-level port therefore *copies* a donor car's model
@@ -166,14 +169,16 @@ Milestones: decode every `GT4_US2560` table (oracle: `ka_01` row 59 carries name
 a table back and reload it with identical rows; rebuild `GT4.VOL` with only that table
 changed; add one trim car and see it in the garage and in Arcade.
 
-**Where the roster comes from is still open** (2026-11-26, in game). The menus take the
-display name from the string DB — renaming `american_StrDB.sdb` string 84 to "Ford Ka ZZZ"
-makes the Arcade Ford list show that name — but not the membership: the clone's three
-added rows change neither the Arcade count (240 cars, Ford 5) nor the GT Mode dealer
-(eight Ford new cars, no clone). No `GT4_US2560` table carries 240 rows (`GENERIC_CAR`
-722, `CAR_NAME_american` 804, and `car/menu` holds 807 model files), so the list is
-compiled or built from a table not yet identified, and a row-level car add needs the
-executable half — the same Windows build the 24-car field waits on.
+**Where the roster comes from is settled** (2026-11-26, in game). The membership is data:
+`projects/arcade/US_carlist.adc` (and the dealer's `projects/gtmode/US_carlist.adc`) holds
+one list per maker as `u32 object id, 0x1D, u16 length, car code` entries. Replacing the
+Ka's `ka_01` with `m3_04` in `ford_carlist` puts the BMW M3 '04 page under Ford with its
+own data (`gt4-arcadelist-m3.iso`); the `Ford N cars` line is a separate `*_carnum` script
+object, so it stayed at five. What the clone still lacks (High confidence) is the per-car
+`CARS/<row id>` record: renaming the Ka's own label to `ka_02` (row ids and `CARS/…003B`
+untouched, `gt4-row59-ka02.iso`) loads it normally, while a new row id has no record. A row-level add therefore needs a generated CARS record
+and a new catalogue entry — the catalogue's CARS leaves are full (42 entries, 19 bytes
+free), so that work includes a leaf split. It is data-side, no build: TASK-222.
 
 ### B. Cars with new art — TASK-217
 
@@ -226,16 +231,12 @@ repository ships tooling and the conversion code, never assets from either disc.
 
 ## Unknowns that decide the schedule
 
-- Whether GT4's menus and save system enumerate cars from the SpecDB at runtime or from
-  a compiled table. Answered in part (2026-11-26): names come from the string DB; the
-  roster does not come from any row table — a clone of a listed car (`ka_01` as `ka_02`)
-  leaves Arcade's Ford list at five and the dealer at eight, and no table has 240 rows.
-  The list itself is data: `projects/<mode>/US_carlist.adc` carries one per maker
-  (`ford_carlist`, …) as `u32 object id, 0x1D, u16 length, car code` entries, and
-  `config/arcade_car.adc` is the `ArcadeCar` Adhoc class that reads them. A clone's rows
-  never reach it; rewriting a code in the list crashes the game (`ra 0x0031C8A8`), so an
-  entry also binds to an object id or table index inside the `ADCH005` container. Decoding
-  that container so entries can be appended is the next step — data-side, no build.
+- How a car code becomes a car. Answered (2026-11-26): the roster is the per-maker lists
+  in `projects/<mode>/US_carlist.adc`; a code label resolves through its `.idi` label to a
+  row id, and the menu loads `specdb/GT4_US2560/CARS/<row id>`, a ~1.2 KB per-car record.
+  A new row id without that record builds a null car and crashes (`ra 0x0031C8A8`). What
+  the record's fields mean, and how to insert a new catalogue entry and CARS record, is
+  the TASK-222 gate.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).
