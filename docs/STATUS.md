@@ -19,10 +19,12 @@ Ford Ka `01.
   save). Earlier note corrected: the pool does cap the candidates, so the data mod now raises rows and pools together.
 - `gt4-rebuilt.iso` boots but its re-serialized `GENERIC_CAR` (uncompressed form) is misread: the Arcade car screen
   shows `Type:--`, nonsense power and refuses the car. Another proof that a boot check does not validate an image.
-- **The car clone image races.** `gt4-clone-xa99b.iso` (file SHA-256 `f640bfb3…`, the A4 image rebuilt with the
-  dictionary writer) boots, reads the donor's specs correctly on the car screen, and races six cars at Tsukuba and
-  Nordschleife with the HUD and no halt. Arcade lists the shipped roster, so the clone still has to be seen in a GT
-  Mode garage; a save is needed for that and for the GT Mode `RACE` rows.
+- **The car clone image races, but its car is not listed.** `gt4-clone-xa99b.iso` (file SHA-256 `f640bfb3…`, the A4
+  image rebuilt with the dictionary writer) boots, reads the donor's specs correctly on the car screen, and races six
+  cars at Tsukuba and Nordschleife with the HUD and no halt. Its rows land (`GENERIC_CAR` and `CAR_VARIATION_american`
+  722 → 723, `ARCADEINFO_NORMAL` 721 → 722) yet the Arcade Ford list still reports five cars and shows no clone: the
+  menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), so the dealer
+  list is testable next; TASK-217's real model is the likely missing half.
 - Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`
   (file SHA-256). The three earlier images are superseded. Details: `docs/GT4-LARGER-FIELD.md`.
 

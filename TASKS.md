@@ -3470,9 +3470,16 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   not read), so it was rebuilt with the dictionary writer as `gt4-clone-xa99b.iso` (file SHA-256 `f640bfb3…`).
 - Milestone A4 in game (2026-11-26, Arcade, Ford Ka `01): the clone image boots, the car screen reads the donor
   correctly (`Type:FF`, 59 HP/5,000 rpm, 77.39 ft.lb/2,500 rpm — the earlier misread was the writer form), and races
-  load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt. Arcade lists the shipped roster
-  and does not show the clone, so the garage proof (the clone as a second car in GT Mode) still needs a GT Mode save;
-  what the run does prove is that the 91-table rewrite does not break the menus or the race load.
+  load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt.
+- **The clone's rows are written but the car is not listed.** In the rebuilt image `GENERIC_CAR` and
+  `CAR_VARIATION_american` go from 722 to 723 rows and `ARCADEINFO_NORMAL` from 721 to 722 (new row 1078, the donor's
+  fields), yet the Arcade Ford list still reports five cars and never shows "Ford Ka `01 Clone". So the row write
+  lands but no menu enumerates it: the list must come from a model, a code prefix or a compiled roster rather than
+  from these rows alone. The control (same screen on the shipped disc) was not captured, and the GT Mode dealer list
+  was not reached; both are the next check, and TASK-217 (car art/model) is the likely missing half anyway.
+- GT Mode is reachable with the test card: `card-gt.ps2`, a copy of `card-test.ps2`, holds a `BASCUS-97328GAMEDATA`
+  save; the game opens "Aa's Home" (Day 1, 10,000 cr, garage 0/0 cars). The dealer was not found on the map before
+  the session ended.
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
