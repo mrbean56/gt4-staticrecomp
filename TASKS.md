@@ -3477,6 +3477,15 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   lands but no menu enumerates it: the list must come from a model, a code prefix or a compiled roster rather than
   from these rows alone. The GT Mode dealer (below) does not list it either; TASK-217's real model is still the likely
   missing half.
+- **A clone of a listed car still does not appear** (2026-11-26, Confirmed in game). `ka_01` cloned under `ka_02` with
+  its own name (`gt4-clone-ka.iso`, file SHA-256 `4eb4a872…`, 91 entries replaced) leaves the Arcade Ford list at five
+  cars. The earlier clone used `xa_99`, which may not itself be Arcade-selectable, so this removes that doubt: even a
+  clone of a listed car adds nothing. Arcade's roster is not built from the SpecDB rows.
+- **What the roster is.** `config/arcade_car.adc` is the compiled Adhoc bytecode of the `ArcadeCar` class: fields
+  `car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`, and methods
+  `isSelectable`, `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable` that build a `car_list` by `size`/`index`
+  (2,043 bytes, `ADCH005`, no car code or model code inside). The instances are therefore created by code from a list
+  that the file does not carry; where that list lives is still Unknown and is the build-side question to answer.
 - **Menus take the name from the string DB and the roster from elsewhere** (2026-11-26, Confirmed in game). Renaming
   `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" and setting `GENERIC_CAR` row 59's price to 17,040 makes the Arcade
   Ford list show "Ford Ka ZZZ", so the display name is data. Membership is not: no `GT4_US2560` table has 240 rows

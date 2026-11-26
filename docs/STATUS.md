@@ -25,6 +25,11 @@ Ford Ka `01.
   722 → 723, `ARCADEINFO_NORMAL` 721 → 722) yet the Arcade Ford list still reports five cars and shows no clone: the
   menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), and the dealer
   does not list it either (next bullet); TASK-217's real model is the likely missing half.
+- **A clone of a listed car adds nothing.** `ka_01` cloned as `ka_02` with its own name (`gt4-clone-ka.iso`, file
+  SHA-256 `4eb4a872…`) leaves Arcade's Ford list at five cars, so the earlier clone with `xa_99` was not the reason
+  the roster ignored it. `config/arcade_car.adc` holds the compiled Adhoc bytecode of the `ArcadeCar` class
+  (`car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`; `isSelectable`,
+  `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable`) and builds a `car_list` from a list it does not carry.
 - **Menus read the name from the string DB, the roster from code.** Renaming `american_StrDB.sdb` string 84 to
   "Ford Ka ZZZ" (with row 59's price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name
   is data, unlike membership. No `GT4_US2560` table has the roster's 240 rows (`GENERIC_CAR` 722,

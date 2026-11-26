@@ -227,9 +227,12 @@ repository ships tooling and the conversion code, never assets from either disc.
 ## Unknowns that decide the schedule
 
 - Whether GT4's menus and save system enumerate cars from the SpecDB at runtime or from
-  a compiled table. Answered in part (2026-11-26): names come from the string DB, the
-  roster does not come from any row table (a clone's rows change nothing, no table has
-  240 rows), so the roster is compiled or built from a table not yet found.
+  a compiled table. Answered in part (2026-11-26): names come from the string DB; the
+  roster does not come from any row table — a clone of a listed car (`ka_01` as `ka_02`)
+  leaves Arcade's Ford list at five and the dealer at eight, and no table has 240 rows.
+  `config/arcade_car.adc` is the `ArcadeCar` Adhoc class (car_code, race_code, earth,
+  is_tire_selectable, is_selectable, runnable_num) and builds its `car_list` from a list
+  the file does not hold. Finding that list is the build-side task.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).
