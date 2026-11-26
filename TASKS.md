@@ -3478,14 +3478,21 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   from these rows alone. The GT Mode dealer (below) does not list it either; TASK-217's real model is still the likely
   missing half.
 - **A clone of a listed car still does not appear** (2026-11-26, Confirmed in game). `ka_01` cloned under `ka_02` with
-  its own name (`gt4-clone-ka.iso`, file SHA-256 `4eb4a872…`, 91 entries replaced) leaves the Arcade Ford list at five
-  cars. The earlier clone used `xa_99`, which may not itself be Arcade-selectable, so this removes that doubt: even a
-  clone of a listed car adds nothing. Arcade's roster is not built from the SpecDB rows.
-- **What the roster is.** `config/arcade_car.adc` is the compiled Adhoc bytecode of the `ArcadeCar` class: fields
-  `car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`, and methods
-  `isSelectable`, `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable` that build a `car_list` by `size`/`index`
-  (2,043 bytes, `ADCH005`, no car code or model code inside). The instances are therefore created by code from a list
-  that the file does not carry; where that list lives is still Unknown and is the build-side question to answer.
+  its own name and its class/event rows (95 rows in 44 tables, `gt4-clone-ka2.iso`) leaves the Arcade Ford list at five
+  cars, so a car's rows alone never reach the menus.
+- **The roster is data after all: `projects/arcade/US_carlist.adc`.** A scan of the volume found the car codes inside
+  `projects/arcade/US_carlist.adc` (59 KB, `ADCH005`), `projects/gtmode/US_carlist.adc` (the dealer) and
+  `projects/boot/US_carlist.adc`: one list per maker (`ford_carlist`, `chevrolet_carlist`, …, 40+ makers), each a
+  u32 count followed by entries of `u32 object id, 0x1D, u16 length, car code`. Arcade's 240 cars and the dealer's
+  eight Ford new cars come from these lists, not from the SpecDB.
+- **Rewriting a code in that list crashes the game** (2026-11-26, Confirmed). Replacing the Ka's `ka_01` with `ka_02`
+  in `ford_carlist` (same length, no structural change; 92 to 98 entries replaced overall) makes the image halt right
+  after Start on a null call (`no translated code at 0x00000000`, `ra 0x0031C8A8`). The same clone without the list
+  edit reaches the car screen and shows Ford five cars, so the entry binds to more than the code string — an object id
+  or a table index inside the Adhoc container we have not decoded. `config/arcade_car.adc` is the `ArcadeCar` Adhoc
+  class (fields `car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`; methods
+  `isSelectable`, `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable`) and builds a `car_list` with `size`/`index`.
+  Next: decode the `ADCH005` container so a list entry can be appended and resolved.
 - **Menus take the name from the string DB and the roster from elsewhere** (2026-11-26, Confirmed in game). Renaming
   `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" and setting `GENERIC_CAR` row 59's price to 17,040 makes the Arcade
   Ford list show "Ford Ka ZZZ", so the display name is data. Membership is not: no `GT4_US2560` table has 240 rows

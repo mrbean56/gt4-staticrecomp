@@ -230,9 +230,12 @@ repository ships tooling and the conversion code, never assets from either disc.
   a compiled table. Answered in part (2026-11-26): names come from the string DB; the
   roster does not come from any row table — a clone of a listed car (`ka_01` as `ka_02`)
   leaves Arcade's Ford list at five and the dealer at eight, and no table has 240 rows.
-  `config/arcade_car.adc` is the `ArcadeCar` Adhoc class (car_code, race_code, earth,
-  is_tire_selectable, is_selectable, runnable_num) and builds its `car_list` from a list
-  the file does not hold. Finding that list is the build-side task.
+  The list itself is data: `projects/<mode>/US_carlist.adc` carries one per maker
+  (`ford_carlist`, …) as `u32 object id, 0x1D, u16 length, car code` entries, and
+  `config/arcade_car.adc` is the `ArcadeCar` Adhoc class that reads them. A clone's rows
+  never reach it; rewriting a code in the list crashes the game (`ra 0x0031C8A8`), so an
+  entry also binds to an object id or table index inside the `ADCH005` container. Decoding
+  that container so entries can be appended is the next step — data-side, no build.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).

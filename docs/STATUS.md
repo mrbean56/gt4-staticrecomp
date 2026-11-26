@@ -25,11 +25,15 @@ Ford Ka `01.
   722 → 723, `ARCADEINFO_NORMAL` 721 → 722) yet the Arcade Ford list still reports five cars and shows no clone: the
   menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), and the dealer
   does not list it either (next bullet); TASK-217's real model is the likely missing half.
-- **A clone of a listed car adds nothing.** `ka_01` cloned as `ka_02` with its own name (`gt4-clone-ka.iso`, file
-  SHA-256 `4eb4a872…`) leaves Arcade's Ford list at five cars, so the earlier clone with `xa_99` was not the reason
-  the roster ignored it. `config/arcade_car.adc` holds the compiled Adhoc bytecode of the `ArcadeCar` class
-  (`car_code`, `race_code`, `earth`, `is_tire_selectable`, `is_selectable`, `runnable_num`; `isSelectable`,
-  `isTireSelectable`, `isRoadRunnable`, `isDirtRunnable`) and builds a `car_list` from a list it does not carry.
+- **The roster is data: `projects/<mode>/US_carlist.adc`.** The volume scan found the car codes in
+  `projects/arcade/US_carlist.adc` (59 KB), `projects/gtmode/US_carlist.adc` and `projects/boot/US_carlist.adc`: one
+  list per maker, each a count followed by `u32 object id, 0x1D, u16 length, car code` entries. Arcade's 240 and the
+  dealer's eight Fords come from these lists. A car's rows alone still never reach them: `ka_01` cloned as `ka_02`
+  with its class rows (95 rows) leaves Ford at five.
+- **Rewriting a code in the list crashes the game** (`ra 0x0031C8A8`, same null call shape). Swapping the Ka's code
+  for the clone's in `ford_carlist` halts the image right after Start, while the clone alone reaches the car screen,
+  so an entry binds to an object id or table index we have not decoded. `config/arcade_car.adc` is the `ArcadeCar`
+  Adhoc class that builds `car_list` from these entries.
 - **Menus read the name from the string DB, the roster from code.** Renaming `american_StrDB.sdb` string 84 to
   "Ford Ka ZZZ" (with row 59's price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name
   is data, unlike membership. No `GT4_US2560` table has the roster's 240 rows (`GENERIC_CAR` 722,
