@@ -3467,7 +3467,12 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   `tests/python/test_gt4_car_clone.py`, one against a built image. Image `gt4-clone-xa99.iso` (file SHA-256
   `93dfc6e3…`): 91 entries change (41 row tables, 41 label tables, 9 name tables), `xa_99` = "Ford Ka `01 Clone".
   **That image predates the 2026-11-26 writer fix** (its tables were written in the uncompressed layout the game does
-  not read), so it must be rebuilt with `compressed=True` before the garage test means anything.
+  not read), so it was rebuilt with the dictionary writer as `gt4-clone-xa99b.iso` (file SHA-256 `f640bfb3…`).
+- Milestone A4 in game (2026-11-26, Arcade, Ford Ka `01): the clone image boots, the car screen reads the donor
+  correctly (`Type:FF`, 59 HP/5,000 rpm, 77.39 ft.lb/2,500 rpm — the earlier misread was the writer form), and races
+  load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt. Arcade lists the shipped roster
+  and does not show the clone, so the garage proof (the clone as a second car in GT Mode) still needs a GT Mode save;
+  what the run does prove is that the 91-table rewrite does not break the menus or the race load.
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
