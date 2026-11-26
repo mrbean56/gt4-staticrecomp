@@ -3524,6 +3524,15 @@ back byte-identically; substitute one shape's vertices and see it in game; then 
 (`gt3tool car-export`, MIT) into that written form with wheels, LOD and the garage preview. Porsche 911 (996) GT3
 and Lamborghini Diablo are the targets with no GT4 equivalent at all. Every visible result is the owner's in-game
 test; effort is not measured and this is the long pipeline.
+- VIF upload inventory (2026-11-26): `scripts/gt4_model_stream.py` frames a descriptor packet and lists its
+  `UNPACK` uploads. Every descriptor of `car/menu/fdeu0006` (154 packets) frames to exactly its declared quadword
+  count, and the float family decodes to numbers: 3x32-bit positions at VU 0xC000, 2x32-bit texture coordinates at
+  0xC040, 3x32-bit **unit** normals at 0xC080 (4,808 checked, all within 0.001 of length 1) and a single zero vector
+  at 0xC0C0. The quantized family — 3x16-bit at 0x8000, 2x16-bit at 0x8040, 4x8-bit at 0xC080, 3x8-bit at 0x8080 —
+  appears in `car/lod`, `car/open` and in every course model section; its scale and bias live in the microcode and
+  are not decoded, so the reader reports its shape and leaves values `None`. Controls:
+  `tests/python/test_gt4_model_stream.py` (7 tests). Still open for this task: the microcode that turns uploads into
+  GIF packets, materials and texture bodies.
 
 ### TASK-218 — GT4 course containers and the first ported circuit (📋 Planned, research)
 
@@ -3538,7 +3547,7 @@ the port document; the dirt and mountain ones come after the tarmac.
   `CRSS`, `GDGT`, `RNW4`, `CRPM`), each running to the next slot's offset, so trailing padding belongs to its
   section. `read_settings` decodes the `CRSS` header: version 1, declared content length, four raw sub-block
   offsets (`apricot`: 0x3F0 of content, offsets 0x28/0x2C/0x30/0x3C0, grid table with count 8 at 0x30).
-  Every course round-trips byte-identically. Controls: `tests/python/test_gt4_course.py`, 17 tests (synthetic plus
+  Every course round-trips byte-identically. Controls: `tests/python/test_gt4_course.py`, 18 tests (synthetic plus
   real disc, one walking all 110 courses and all 110 `.ad` files).
 - `.ad` decode (2026-11-26): a `.ad` is the same container with a 32-entry table, and 93 of the 110 carry `ADLN` at
   slot 1: a 0x30-byte header (magic, declared length, count 8, table at 0x30), a table of eight offsets, then one
@@ -3549,6 +3558,11 @@ the port document; the dirt and mountain ones come after the tarmac.
   full-length line, 3 a third of different density, 4 a short near-straight line across the start area, 7 sparse and
   often absent, 5 empty everywhere. Those 17 `.ad` files without `ADLN` (photo spots `ss_*`, the two gymkhana
   spirals, `testcourse_100m`) start with a pointer-like form and are kept verbatim; `read_lines` refuses them.
+  Model sections (2026-11-26, Confirmed): every `crs/` file carries its geometry in `MDLS` sections of exactly the
+  car model form — the shipped car probe validates all **892** sections across the 110 courses (67,565 models,
+  74,390 shapes), so one serialized-model reader serves cars and courses. `gt4_course.model_sections()` and
+  `probe_models(section)` expose it. Their VIF uploads use the quantized family (3x16 at 0x8000, 2x16 at 0x8040,
+  4x8 at 0xC080, 3x8 at 0x8080) plus `STROW`/`STMOD`/`STMASK`, which the stream reader reports by shape only.
   `CRSS` content (2026-11-26, partially named): a record index whose count and first offset sit at +0x20 (62 courses)
   or +0x24 (12 courses), four sub-block starts at +0x04..+0x14 tiling the content, records of 4-9 points in world
   space (first two on the racing line, the rest 40-190 m off and 5-36 m up); it is not a start grid — counts are never

@@ -192,6 +192,27 @@ class ShippedCourseTests(unittest.TestCase):
 
 
 @unittest.skipUnless(ISO.is_file(), "GT4_ISO is not set")
+class ShippedModelTests(unittest.TestCase):
+    def test_every_course_model_section_probes(self) -> None:
+        sections = models = shapes = 0
+        with gt4_volume.verified_volume(ISO) as stream:
+            catalogue = gt4_volume.read_catalogue(stream)
+            paths = sorted(path for path in catalogue.files
+                           if path.startswith("crs/") and not path.endswith(".ad")
+                           and "/bestline/" not in path)
+            for path in paths:
+                container = course.read_container(payload(stream, catalogue, path))
+                for section in container.model_sections():
+                    info = course.probe_models(section)
+                    sections += 1
+                    models += info["model_count"]
+                    shapes += info["shape_count"]
+        self.assertEqual(sections, 892)
+        self.assertEqual(models, 67565)
+        self.assertEqual(shapes, 74390)
+
+
+@unittest.skipUnless(ISO.is_file(), "GT4_ISO is not set")
 class ShippedRaceTests(unittest.TestCase):
     def test_every_race_data_round_trips(self) -> None:
         seen = set()

@@ -38,7 +38,15 @@ Ford Ka `01.
   0x80-aligned tagged sections; `CRSS` settings header) and round-trips every file byte-identically. The 93 `.ad`
   files with `ADLN` decode into eight polylines of 0x40-byte records (position, tangent heading); line 1 and 2 are
   the road edges, 4 a short line across the start area. The other 17 (photo spots, gymkhana spirals, `testcourse_100m`)
-  carry an undecoded form and are kept verbatim. Controls: 17 in `tests/python/test_gt4_course.py`.
+  carry an undecoded form and are kept verbatim. The course geometry is the **car model form**: the shipped model
+  probe validates all 892 `MDLS` sections across the 110 courses (67,565 models, 74,390 shapes), so TASK-217 and
+  TASK-218 share one serialized-model reader. Controls: 18 in `tests/python/test_gt4_course.py`.
+- **Serialized model uploads are decoded for the float family.** `scripts/gt4_model_stream.py` frames a descriptor
+  packet and lists its VIF uploads: 3x32-bit positions at VU 0xC000, 2x32-bit texture coordinates at 0xC040, 3x32-bit
+  unit normals at 0xC080 (4,808 checked, all unit within 0.001) and a zero vector at 0xC0C0, with every packet of
+  `car/menu/fdeu0006` ending exactly on its declared quadword count. The quantized family (3x16 at 0x8000, 2x16 at
+  0x8040, bytes at 0xC080/0x8080) appears in `car/lod`, `car/open` and every course section and is reported by shape
+  only; its scale lives in the microcode. Controls: 7 in `tests/python/test_gt4_model_stream.py`.
 - `write_table(..., compressed=True)` now refuses a table whose version is not shipped (`0x00080001`/`0x00080003`): a
   probe script that rebuilt `GENERIC_CAR` with the reader's default dropped the version silently.
 - Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`,

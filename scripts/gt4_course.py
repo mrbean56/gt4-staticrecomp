@@ -22,6 +22,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+import gt4_model_probe
+
 SLOT_COUNT = 64
 RACE_SLOT_COUNT = 32
 ALIGNMENT = 0x80
@@ -74,6 +76,10 @@ class CourseContainer:
 
     def section_with_tag(self, tag: str) -> Section | None:
         return next((section for section in self.sections if section.tag == tag), None)
+
+    def model_sections(self) -> tuple[Section, ...]:
+        """The `MDLS` sections of a course file, in slot order."""
+        return tuple(section for section in self.sections if section.tag == "MDLS")
 
 
 @dataclass(frozen=True)
@@ -138,6 +144,16 @@ def write_container(container: CourseContainer) -> bytes:
         output += section.data
     require(len(output) == container.size, "sections do not cover the container")
     return bytes(output)
+
+
+def probe_models(section: Section) -> dict:
+    """Header and table probe of a model section; course geometry uses the car model form.
+
+    All 892 `MDLS` sections across the 110 shipped courses pass the same probe the car models
+    pass, so one serialized-model reader serves both pipelines.
+    """
+    require(section.tag == "MDLS", "section is not a model section")
+    return gt4_model_probe.probe_mdls(section.data, 0)
 
 
 def read_settings(section: Section) -> CourseSettings:
