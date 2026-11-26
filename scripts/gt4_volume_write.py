@@ -442,6 +442,174 @@ def patch_page_entry(page: TocPage, slot: int, data_page: int,
     return replace(page, entries=tuple(entries))
 
 
+def align4(value: int) -> int:
+    return (value + 3) & ~3
+
+
+def page_data_end(page: TocPage) -> int:
+    """Return the first byte after every key and metadata block of a page."""
+    end = 12
+    for entry in page.entries:
+        end = max(end, entry.key_offset + len(entry.key))
+        if page.kind == 0:
+            end = max(end, entry.meta_offset + entry.meta_size)
+    return end
+
+
+def pack_page(page: TocPage, entries: Sequence[TocEntry]) -> TocPage:
+    """Lay entries out from offset 12 on a fresh page: keys, then metadata."""
+    table_start = PAGE_BYTES - len(entries) * 8 - 4
+    cursor = 12
+    key_offsets = []
+    for entry in entries:
+        key_offsets.append(cursor)
+        cursor += len(entry.key)
+    cursor = align4(cursor)
+    meta_offsets = []
+    for entry in entries:
+        if page.kind == 0:
+            meta_offsets.append(cursor)
+            require(entry.meta_size == len(entry.meta), "metadata size mismatch")
+            cursor += entry.meta_size
+            cursor = align4(cursor)
+        else:
+            meta_offsets.append(None)
+    require(cursor <= table_start, "page entries do not fit their slots")
+    packed = []
+    for entry, key_offset, meta_offset in zip(entries, key_offsets, meta_offsets):
+        if meta_offset is None:
+            packed.append(replace(entry, key_offset=key_offset))
+        else:
+            packed.append(replace(entry, key_offset=key_offset, meta_offset=meta_offset))
+    return replace(page, entries=tuple(packed), layout=bytes(PAGE_BYTES))
+
+
+def insert_leaf_entry(page: TocPage, slot: int, key: bytes,
+                      meta: bytes) -> TocPage | None:
+    """Insert one file entry in the page's free space; None when it does not fit."""
+    require(page.kind == 0, "file entry needs a leaf page")
+    table_start = PAGE_BYTES - (len(page.entries) + 1) * 8 - 4
+    key_offset = page_data_end(page)
+    meta_offset = align4(key_offset + len(key))
+    if meta_offset + len(meta) > table_start:
+        return None
+    entries = list(page.entries)
+    entries.insert(slot, TocEntry(key_offset, key, meta_offset, len(meta), meta))
+    return replace(page, entries=tuple(entries))
+
+
+def insert_index_entry(page: TocPage, slot: int, key: bytes,
+                       child: int) -> TocPage | None:
+    """Insert one child entry in an index page's free space; None when it does not fit."""
+    require(page.kind == 1, "child entry needs an index page")
+    table_start = PAGE_BYTES - (len(page.entries) + 1) * 8 - 4
+    key_offset = page_data_end(page)
+    if key_offset + len(key) > table_start:
+        return None
+    entries = list(page.entries)
+    entries.insert(slot, TocEntry(key_offset, key, child & 0xFFFF, child >> 16))
+    return replace(page, entries=tuple(entries))
+
+
+def split_page(page: TocPage, entries: Sequence[TocEntry]) -> tuple[TocPage, TocPage]:
+    """Split a page's entries in half, both halves packed on fresh pages."""
+    require(len(entries) >= 4, "page is too small to split")
+    half = len(entries) // 2
+    return pack_page(page, entries[:half]), pack_page(page, entries[half:])
+
+
+def find_leaf_slot(pages: Sequence[TocPage], key: bytes) -> tuple[int, int]:
+    """Return the leaf and slot where a key belongs, by catalogue order."""
+    last = None
+    for page_id, page in enumerate(pages):
+        if page.kind != 0:
+            continue
+        for slot, entry in enumerate(page.entries):
+            if entry.key >= key:
+                return page_id, slot
+        last = (page_id, len(page.entries))
+    raise VolumeWriteError("key sorts after the catalogue's last entry: " + repr(last))
+
+
+def entries_fit(page: TocPage, entries: Sequence[TocEntry]) -> bool:
+    """Whether a set of entries fits a page packed from offset 12."""
+    cursor = 12
+    for entry in entries:
+        cursor += len(entry.key)
+    cursor = align4(cursor)
+    if page.kind == 0:
+        for entry in entries:
+            cursor = align4(cursor + entry.meta_size)
+    return cursor <= PAGE_BYTES - len(entries) * 8 - 4
+
+
+def find_parent(pages: Sequence[TocPage], child: int) -> tuple[int, int]:
+    for page_id, page in enumerate(pages):
+        if page.kind != 1:
+            continue
+        for slot, entry in enumerate(page.entries):
+            if (entry.meta_offset | (entry.meta_size << 16)) == child:
+                return page_id, slot
+    raise VolumeWriteError("catalogue page has no parent")
+
+
+def insert_child(pages: list[TocPage], lower: int, first_key: bytes, upper: int,
+                 changed: set[int]) -> None:
+    """Point a parent at a new upper sibling, splitting the parent when it is full."""
+    parent_id, slot = find_parent(pages, lower)
+    page = pages[parent_id]
+    entries = list(page.entries)
+    old = entries[slot]
+    entries[slot] = replace(old, key=first_key)
+    entries.insert(slot + 1, TocEntry(0, old.key, upper & 0xFFFF, upper >> 16))
+    if entries_fit(page, entries):
+        pages[parent_id] = pack_page(page, entries)
+        changed.add(parent_id)
+        return
+    lower_page, upper_page = split_page(page, entries)
+    new_id = len(pages)
+    upper_page = replace(upper_page, previous_page=parent_id, next_page=page.next_page)
+    lower_page = replace(lower_page, next_page=new_id)
+    pages.append(upper_page)
+    pages[parent_id] = lower_page
+    changed.update((parent_id, new_id))
+    if page.next_page >= 0:
+        pages[page.next_page] = replace(pages[page.next_page], previous_page=new_id)
+        changed.add(page.next_page)
+    require(parent_id != 0, "catalogue root is full")
+    insert_child(pages, parent_id, upper_page.entries[0].key, new_id, changed)
+
+
+def insert_file_entry(pages: list[TocPage], key: bytes, meta: bytes,
+                      changed: set[int]) -> None:
+    """Insert one file record, splitting the leaf (and its parents) when full."""
+    leaf_id, slot = find_leaf_slot(pages, key)
+    page = pages[leaf_id]
+    updated = insert_leaf_entry(page, slot, key, meta)
+    if updated is not None:
+        pages[leaf_id] = updated
+        changed.add(leaf_id)
+        return
+    entries = list(page.entries)
+    entries.insert(slot, TocEntry(0, key, 0, len(meta), meta))
+    lower, upper = split_page(page, entries)
+    new_id = len(pages)
+    upper = replace(upper, previous_page=leaf_id, next_page=page.next_page)
+    lower = replace(lower, next_page=new_id)
+    pages.append(upper)
+    pages[leaf_id] = lower
+    changed.update((leaf_id, new_id))
+    if page.next_page >= 0:
+        pages[page.next_page] = replace(pages[page.next_page], previous_page=new_id)
+        changed.add(page.next_page)
+    insert_child(pages, leaf_id, upper.entries[0].key, new_id, changed)
+
+
+def new_file_meta(data_page: int, stored_size: int, size: int) -> bytes:
+    """Metadata for a new compressed file entry; the modified field means Unknown."""
+    return b"\x02" + struct.pack("<IIII", data_page, 0, stored_size, size)
+
+
 @dataclass(frozen=True)
 class EntryReport:
     path: str
@@ -477,12 +645,24 @@ class Plan:
     payloads: dict[str, bytes]
 
 
+def directory_parent(catalogue: Catalogue, path: str) -> int:
+    """Return the parent directory id shared by a path's siblings."""
+    directory, _, name = path.rpartition("/")
+    prefix = directory + "/" if directory else ""
+    for other, record in catalogue.files.items():
+        if other.startswith(prefix) and "/" not in other[len(prefix):] and other != path:
+            return record.parent
+    raise VolumeWriteError("addition has no sibling to take its directory from: " + path)
+
+
 def build_plan(stream, origin: int, volume_size: int,
-               replacements: dict[str, bytes] | None = None) -> Plan:
+               replacements: dict[str, bytes] | None = None,
+               additions: dict[str, bytes] | None = None) -> Plan:
     """Decide every entry's new offset and the catalogue bytes that describe it."""
     catalogue = read_catalogue(stream, origin, volume_size)
     limit = origin + volume_size
     replacements = {} if replacements is None else replacements
+    additions = {} if additions is None else additions
     payloads = {}
     for path, decoded in replacements.items():
         require(path in catalogue.files, "replacement path is absent: " + path)
@@ -491,6 +671,9 @@ def build_plan(stream, origin: int, volume_size: int,
         stored = read_at(stream, origin + record.offset, record.stored_size, limit)
         payload, reused, size = reframe_replacement(record, bytes(decoded), stored)
         payloads[path] = (payload, reused, size)
+    for path, decoded in additions.items():
+        require(path not in catalogue.files, "addition path already exists: " + path)
+        require(isinstance(decoded, (bytes, bytearray)), "addition must be payload bytes")
 
     cursor = catalogue.data_start
     entries = []
@@ -512,17 +695,38 @@ def build_plan(stream, origin: int, volume_size: int,
         entries.append(EntryReport(path, record.kind, start, stored_size, size,
                                    record.offset, record.stored_size, record.size,
                                    payload is not None, reused))
+    added = []
+    for path, decoded in additions.items():
+        stored = frame_payload(bytes(decoded), 2)
+        start = (cursor + PAGE_BYTES - 1) // PAGE_BYTES * PAGE_BYTES
+        data_page, aligned = divmod(start - catalogue.data_start, PAGE_BYTES)
+        require(aligned == 0 and 0 <= data_page < 1 << 32,
+                "addition offset is not a page index")
+        cursor = start + len(stored)
+        entries.append(EntryReport(path, 2, start, len(stored), len(decoded),
+                                   0, 0, 0, False, False))
+        payloads[path] = (stored, False, len(decoded))
+        added.append((path, data_page, len(stored), len(decoded)))
     require(cursor <= volume_size, "volume layout does not fit the GT4.VOL extent")
 
+    pages = list(catalogue.page_structures)
+    for page_index, items in patched.items():
+        for slot, data_page, stored_size, size in items:
+            pages[page_index] = patch_page_entry(pages[page_index], slot, data_page,
+                                                 stored_size, size)
+    changed = set(patched)
+    for path, data_page, stored_size, size in added:
+        parent = directory_parent(catalogue, path)
+        key = parent.to_bytes(4, "big") + path.rpartition("/")[2].encode("utf-8")
+        insert_file_entry(pages, key, new_file_meta(data_page, stored_size, size), changed)
+    require(len(pages) <= 1 << 16, "catalogue page id space exhausted")
     stored_pages = []
-    for index, page in enumerate(catalogue.page_structures):
-        if index in patched:
-            for slot, data_page, stored_size, size in patched[index]:
-                page = patch_page_entry(page, slot, data_page, stored_size, size)
+    for index, page in enumerate(pages):
+        if index in changed or index >= len(catalogue.stored_pages):
             stored_pages.append(encode_stored_page(page))
         else:
             stored_pages.append(catalogue.stored_pages[index])
-    toc = encode_catalogue(catalogue.page_structures, stored_pages, catalogue.physical_pages)
+    toc = encode_catalogue(pages, stored_pages, catalogue.physical_pages)
     return Plan(catalogue, toc, tuple(entries), {path: item[0] for path, item in payloads.items()})
 
 
@@ -590,9 +794,10 @@ def write_plan(stream, output, plan: Plan, origin: int, volume_size: int) -> Rep
 
 
 def rewrite_volume_region(stream, destination: Path, replacements: dict[str, bytes] | None = None,
+                          additions: dict[str, bytes] | None = None,
                           *, origin: int = 0, volume_size: int = VOLUME_SIZE) -> Report:
     """Rewrite one volume region into a fresh file; offsets are relative to ``origin``."""
-    plan = build_plan(stream, origin, volume_size, replacements)
+    plan = build_plan(stream, origin, volume_size, replacements, additions)
     output = destination.open("xb")
     try:
         with output:
@@ -629,7 +834,8 @@ def verify_disc(stream, pin: dict) -> None:
 
 
 def rewrite_volume(source: Path, destination: Path,
-                   replacements: dict[str, bytes] | None = None) -> Report:
+                   replacements: dict[str, bytes] | None = None,
+                   additions: dict[str, bytes] | None = None) -> Report:
     """Verify the pinned disc image, then write its GT4.VOL region alone."""
     pin = load_disc_pin()
     require(VOLUME_OFFSET + VOLUME_SIZE <= pin["size_bytes"],
@@ -637,12 +843,13 @@ def rewrite_volume(source: Path, destination: Path,
     require(not destination.exists(), "output already exists")
     with source.open("rb") as stream:
         verify_disc(stream, pin)
-        return rewrite_volume_region(stream, destination, replacements,
+        return rewrite_volume_region(stream, destination, replacements, additions,
                                      origin=VOLUME_OFFSET, volume_size=VOLUME_SIZE)
 
 
 def rewrite_iso(source: Path, destination: Path,
-                replacements: dict[str, bytes] | None = None) -> Report:
+                replacements: dict[str, bytes] | None = None,
+                additions: dict[str, bytes] | None = None) -> Report:
     """Verify the pinned disc image, then copy it with the GT4.VOL region rebuilt."""
     pin = load_disc_pin()
     require(VOLUME_OFFSET + VOLUME_SIZE <= pin["size_bytes"],
@@ -651,7 +858,7 @@ def rewrite_iso(source: Path, destination: Path,
     plan = None
     with source.open("rb") as stream:
         verify_disc(stream, pin)
-        plan = build_plan(stream, VOLUME_OFFSET, VOLUME_SIZE, replacements)
+        plan = build_plan(stream, VOLUME_OFFSET, VOLUME_SIZE, replacements, additions)
         output = destination.open("xb")
         try:
             with output:
@@ -671,14 +878,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--replace", action="append", default=[], metavar="PATH=FILE",
                         help="catalogue path and a file holding its decoded payload")
+    parser.add_argument("--add", action="append", default=[], metavar="PATH=FILE",
+                        help="new catalogue path and the file holding its decoded payload")
     arguments = parser.parse_args(argv)
-    replacements = {}
-    for item in arguments.replace:
-        path, separator, filename = item.partition("=")
-        if not separator or not path or not filename:
-            parser.error("--replace needs CATALOGUE_PATH=PAYLOAD_FILE")
-        replacements[path] = Path(filename).read_bytes()
-    report = rewrite_iso(arguments.iso, arguments.output, replacements or None)
+    def load_pairs(items, option):
+        loaded = {}
+        for item in items:
+            path, separator, filename = item.partition("=")
+            if not separator or not path or not filename:
+                parser.error(option + " needs CATALOGUE_PATH=PAYLOAD_FILE")
+            loaded[path] = Path(filename).read_bytes()
+        return loaded
+    replacements = load_pairs(arguments.replace, "--replace")
+    additions = load_pairs(arguments.add, "--add")
+    report = rewrite_iso(arguments.iso, arguments.output, replacements or None, additions or None)
     print(json.dumps({
         "volume_size": report.volume_size,
         "catalogue_sha256": report.catalogue_sha256,
@@ -690,6 +903,8 @@ def main(argv: list[str] | None = None) -> int:
         "identical": report.identical,
         "entries": len(report.entries),
         "replaced": [asdict(entry) for entry in report.entries if entry.replaced],
+        "added": [asdict(entry) for entry in report.entries if entry.source_size == 0
+                  and not entry.replaced],
     }, indent=2))
     return 0
 

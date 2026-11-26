@@ -10,9 +10,9 @@ Two deliberate limits:
 - The class and event rows (`pr_…`, `pt_…`, `df_…`, `gt4r_…`, `gt4sample_…`) are not cloned by
   default: they belong to a class or an event, not to the car, and a clone that added them would
   silently enter events.
-- Strings are reused, so the clone displays its donor's name. That is the point of the first
-  experiment: it proves that a car code with its row set becomes a second car in the garage
-  without touching the string tables.
+- Strings are reused, so the clone displays its donor's name unless `--name` is given.
+- The clone also gets its own `specdb/GT4_US2560/CARS/<row id>` index record, which the menus
+  load for the car code: a row set without one builds a null car (TASK-222).
 
 Usage:
   gt4_car_clone.py --iso <disc.iso> --car ka_01 --as xa_99 --output <clone.iso>
@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 import struct
 
+import gt4_car_index
 import gt4_car_map
 import gt4_specdb
 import gt4_volume
@@ -99,6 +100,14 @@ def plan_clone(tables, code: str, new_code: str,
     return plan
 
 
+def code_row(tables, code: str) -> int:
+    """Return a car code's row id in the main (American) name table."""
+    labels, _ = tables["CAR_NAME_american"]
+    hits = [label.row_id for label in labels if label.name == code]
+    require(len(hits) == 1, "car code is not one CAR_NAME_american label: " + code)
+    return hits[0]
+
+
 def apply_clone(tables, plan: dict[str, list[tuple[str, int, int]]],
                 name: str | None = None, strings=None) -> dict[str, bytes]:
     """Return the replacement bytes of every changed row table, label table and name table."""
@@ -169,9 +178,19 @@ def main(argv: list[str] | None = None) -> int:
     require(not arguments.output.exists(), "output already exists")
     strings = read_strings(arguments.iso) if arguments.name else None
     replacements = apply_clone(tables, plan, arguments.name, strings)
-    written = gt4_volume_write.rewrite_iso(arguments.iso, arguments.output, replacements)
+    new_row = next(new_row for new_label, _, new_row in plan["CAR_NAME_american"]
+                   if new_label == arguments.new_code)
+    donor_record = gt4_car_index.read_index(arguments.iso, code_row(tables, arguments.car))
+    additions = {
+        gt4_car_index.CARS_PREFIX + f"{new_row:016X}":
+            gt4_car_index.write_index(
+                gt4_car_index.clone_index(donor_record, tables, plan, arguments.new_code))
+    }
+    written = gt4_volume_write.rewrite_iso(arguments.iso, arguments.output,
+                                           replacements, additions)
     report["written_sha256"] = written.written_sha256
     report["replaced_entries"] = len(replacements)
+    report["added_entries"] = list(additions)
     print(json.dumps(report, indent=2))
     return 0
 

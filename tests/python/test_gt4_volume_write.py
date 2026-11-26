@@ -614,5 +614,57 @@ class RealDiscTests(unittest.TestCase):
                              (other.kind, other.offset, other.stored_size, other.size), path)
 
 
+    def test_adding_a_cars_record_splits_the_leaf_and_keeps_every_file(self):
+        record = bytes(range(256)) * 4 + bytes(128)
+        path = "specdb/GT4_US2560/CARS/0000000000000436"
+        with ISO_PATH.open("rb") as stream:
+            source = writer.read_catalogue(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+            plan = writer.build_plan(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE,
+                                     None, {path: record})
+        after = writer.parse_catalogue(plan.toc, writer.VOLUME_SIZE)
+        self.assertEqual(len(after.files), len(source.files) + 1)
+        self.assertEqual(after.data_start, source.data_start)
+        self.assertEqual(after.physical_pages, source.physical_pages)
+        for old_path, old in source.files.items():
+            new = after.files[old_path]
+            self.assertEqual((new.kind, new.offset, new.stored_size, new.size),
+                             (old.kind, old.offset, old.stored_size, old.size), old_path)
+        inserted = after.files[path]
+        self.assertEqual((inserted.kind, inserted.size), (2, len(record)))
+        stored = plan.payloads[path]
+        self.assertEqual(len(stored), inserted.stored_size)
+        self.assertEqual(writer.decode_payload(stored, 2, len(record)), record)
+        self.assertGreaterEqual(
+            inserted.offset,
+            max(record.offset + record.stored_size for record in source.files.values()))
+        for page in after.page_structures:
+            self.assertEqual(list(page.entries), sorted(page.entries, key=lambda entry: entry.key))
+        for page_id, page in enumerate(after.page_structures):
+            if page.next_page < 0:
+                continue
+            following = after.page_structures[page.next_page]
+            self.assertEqual(following.previous_page, page_id)
+            self.assertEqual(following.kind, page.kind)
+            if page.kind == 0:
+                self.assertLess(page.entries[-1].key, following.entries[0].key)
+
+    def test_two_additions_land_in_order(self):
+        paths = ["specdb/GT4_US2560/CARS/0000000000000436",
+                 "specdb/GT4_US2560/CARS/0000000000000437"]
+        additions = {paths[0]: bytes(1176), paths[1]: bytes(range(256)) * 3}
+        with ISO_PATH.open("rb") as stream:
+            source = writer.read_catalogue(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE)
+            plan = writer.build_plan(stream, writer.VOLUME_OFFSET, writer.VOLUME_SIZE,
+                                     None, additions)
+        after = writer.parse_catalogue(plan.toc, writer.VOLUME_SIZE)
+        self.assertEqual(len(after.files), len(source.files) + 2)
+        for path in paths:
+            self.assertIn(path, after.files)
+            decoded = writer.decode_payload(plan.payloads[path], 2, len(additions[path]))
+            self.assertEqual(decoded, additions[path])
+        offsets = [after.files[path].offset for path in paths]
+        self.assertEqual(offsets, sorted(offsets))
+
+
 if __name__ == "__main__":
     unittest.main()

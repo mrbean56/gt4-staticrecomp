@@ -3489,9 +3489,9 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   `CARS/` entry, where the working rename kept `CARS/000000000000003B`; a car without a record is what builds the null
   object and makes the Adhoc VM jump to address 0 (`ra 0x0031C8A8`, inside `mJumpZero__execute`). The 804 shipped
   `CARS/` entries are one per `CAR_NAME` row, keyed by the row id in hex.
-- **Next gate: write a CARS record and a catalogue entry** (TASK-222). The catalogue is a paged tree (407 pages, 401
-  leaves; a leaf key is a big-endian parent id plus the name). The 804 CARS entries sit in 42-entry leaves with
-  19 free bytes, so one more entry needs a leaf split; GT4.VOL has 468,952 bytes of slack for the 1.2 KB payload.
+- **The CARS record and the catalogue entry are code-complete** (TASK-222). The catalogue is a paged tree (407
+  pages; a leaf key is a big-endian parent id plus the name). The 804 CARS entries sit in 42-entry leaves with 19
+  free bytes, so one more entry needs a leaf split; GT4.VOL has 468,952 bytes of slack for the 1.2 KB payload.
 - **A rebuilt table must carry its shipped GTDB version.** A probe script rebuilt `GENERIC_CAR` with the reader's
   default (`0x00010000` instead of `0x00080001`); that image booted into the menus but the process exited during the
   session (not isolated). `write_table(..., compressed=True)` now refuses any version outside `0x00080001`/`0x00080003`.
@@ -3656,19 +3656,26 @@ usable and is where the licensing question disappears.
 - Gates: conversion is deterministic (same two images give the same output hashes), the reference game is untouched
   when conversion is skipped, and every converted car or circuit passes the pipeline that produced it.
 
-### TASK-222 — CARS records and catalogue entries (📋 Planned, Python only)
+### TASK-222 — CARS records and catalogue entries (🔧 In progress, Python only; in-game proof)
 
 The gate between "a row set" and "a car the menus can build" (TASK-216, 2026-11-26). `specdb/GT4_US2560/CARS/<row id>`
 is the per-car record the Adhoc `MCarData` natives read; a label that points at a row id without one makes the menu
 build a null car and the VM jump to address 0. The 804 shipped records are one per `CAR_NAME` row, keyed by the row id
 in hex, about 1.2 KB each.
-- Decode one CARS record: a count plus 73 eight-byte pairs for the Ka (two blocks of the same size), with entries
-  shared between different cars; name the fields by matching the car's labels and row ids.
-- Generate a record for a new row set (the clone's ids first) and read it back with a synthetic control.
-- Insert a catalogue entry: a leaf key is a big-endian parent id plus the record name. The CARS leaves are full
-  (42 entries, 19 free bytes), so the writer needs a leaf split and the parent index update; the payload fits the
-  468,952-byte GT4.VOL slack.
-- Prove in game: the `ka_02` clone (95 rows, its own name) with a generated CARS record and a `ford_carlist` entry
-  opens the Ford page, shows "Ford Ka `01 Clone" and races; the same image without the record still crashes.
-- Never weaken the writer's refusal of a catalogue that outgrows its allocation; the split must fit the existing
-  physical-page budget in the header.
+- **The record is `u32 count, u32 0`, then 16-byte `(row id, table id, letter, 0)` entries.** The Ka's 73 entries
+  match its own `.idi` rows one for one; six are shared defaults (BRAKECONTROLLER, ASCC, TCSC, STEER, NATUNE,
+  CLUTCH) and keep the donor row id in a clone. `scripts/gt4_car_index.py` reads and writes the layout and rewrites
+  a donor record through the clone plan (7 tests, real-disc controls included).
+- **The writer inserts a file.** The key is a sibling's parent id plus the name. A full 42-entry CARS leaf has 19
+  free bytes, so the insertion packs the leaf, splits it 21/22, adds an index entry, splits the full index page and
+  adds a root entry; the new payload is page-aligned after the last entry. Packing shrinks the catalogue, so the
+  split fits the shipped page allocation without moving `data_start`. Two additions, their order and every
+  unchanged file are controlled (`test_gt4_volume_write`), and `gt4_car_clone.py` now writes the clone's record.
+- **In game, taking another car's entry is not equivalent.** A cheaper image renamed the Eclipse's `CARS/…0435` to
+  `…0436` and reused its slot: it booted and ran the attract mode, then crashed at `ra 0x0031C8A8` when leaving it
+  — the missing Eclipse record is the likely cause (High confidence). `gt4-clone-record2.iso` (SHA-256 `69d924d2…`)
+  keeps all 804 records, inserts the clone's record through the split, and is the image under test.
+- **To prove in game:** the `ka_02` clone (95 rows, its own name) with its generated CARS record and a
+  `ford_carlist` entry opens the Ford page, shows "Ford Ka `01 Clone" and races; the same image without the record
+  still crashes. Then the GT Mode dealer list.
+

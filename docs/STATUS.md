@@ -36,9 +36,18 @@ Ford Ka `01.
   per-car CARS record is what the menus build the car from. The clone's new row id (1078) has none, which is the
   remaining difference (High confidence) and makes a listed clone build a null car and jump to address 0
   (`ra 0x0031C8A8`, `mJumpZero__execute`).
-- **Next gate (TASK-222): write a CARS record and insert a catalogue entry.** The catalogue is a paged tree (407
-  pages, 401 leaves, big-endian parent id + name keys); the 804 CARS entries fill 42-entry leaves with 19 bytes free,
-  so one more needs a leaf split. GT4.VOL has 468,952 bytes of slack for the ~1.2 KB payload.
+- **CARS record and catalogue insertion are code-complete (TASK-222).** A record is `u32 count, u32 0` then
+  16-byte `(row id, table id, letter, 0)` entries; the Ka's 73 match its own `.idi` rows, six are shared defaults.
+  `gt4_car_index.py` reads and writes the layout and rewrites a donor record for a clone; `gt4_volume_write.py`
+  inserts a new file, splitting the full CARS leaf (42 entries, 19 free bytes), its index page and a root entry.
+  Packing the touched pages shrinks the catalogue, so the split fits the shipped allocation without moving
+  `data_start`. Two additions, their order and every unchanged file are tested; `gt4_car_clone.py` writes the
+  clone's record automatically.
+- **Taking another car's record is not equivalent (in game).** An image that renamed the Eclipse's `CARS/…0435` to
+  `…0436` and reused its slot booted, ran the attract mode, then crashed at `ra 0x0031C8A8` when leaving it — the
+  missing Eclipse record is the likely cause (High confidence). The proof image `gt4-clone-record2.iso`
+  (SHA-256 `69d924d2…`) keeps all 804 records and inserts the clone's through the split; its Ford page and race
+  are the remaining in-game check.
 - **Menus read the name from the string DB.** Renaming `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" (with row 59's
   price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name is data.
 - **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American
