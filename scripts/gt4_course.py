@@ -1,13 +1,20 @@
-"""GT4 course containers (`crs/<id>`): the 64-slot table and its sections (TASK-218).
+"""GT4 course files: containers and race lines (TASK-218).
 
-A course container starts with a table of 64 little-endian file offsets, then the sections those
-offsets point at, in ascending order and 0x80-aligned. Slot 0 is always zero and slot 1 is always
-0x100, the end of the table. A zero slot is absent. Each section runs to the next slot's offset
-(the last one to the end of the file), so trailing padding belongs to its section.
+A course container (`crs/<id>`, and its `.ad` race data) starts with a table of little-endian
+file offsets, then the sections those offsets point at, in ascending order and 0x80-aligned.
+The table holds 64 entries for a course and 32 for a `.ad`; slot 1 is the table's size and
+where the first section starts. Slot 0 is always zero, and a zero slot is absent. Each section
+runs to the next slot's offset (the last one to the end of the file), so trailing padding
+belongs to its section.
 
-Every shipped course carries one `Vls0`/`MDLS` family of sections plus a `CRSS` settings block;
-`read_settings` decodes the settings header, whose sub-block offsets are kept raw because their
-meaning is unknown. `write_container` reproduces a container byte for byte.
+A `.ad` whose first section is `ADLN` carries the course's eight polylines: a 0x30-byte header,
+a table of eight offsets, then one 0x40-byte entry header per line (its record count, then
+zeros) followed by that many 0x40-byte records. Seventeen `.ad` files (the photo spots, the two
+gymkhana spirals and `testcourse_100m`) start with a different, undecoded section, and
+`read_lines` refuses them by magic.
+
+`write_container` reproduces a file byte for byte and `write_lines` reproduces a section, so a
+changed file differs only where it was changed.
 """
 
 from __future__ import annotations
@@ -16,16 +23,20 @@ import struct
 from dataclasses import dataclass
 
 SLOT_COUNT = 64
-HEADER_SIZE = SLOT_COUNT * 4
-FIRST_SECTION_OFFSET = HEADER_SIZE
+RACE_SLOT_COUNT = 32
 ALIGNMENT = 0x80
 SETTINGS_MAGIC = b"CRSS"
 SETTINGS_HEADER_SIZE = 16
 SETTINGS_VERSION = 1
+RACE_MAGIC = b"ADLN"
+RACE_HEADER_SIZE = 0x30
+RACE_LINE_COUNT = 8
+RACE_ENTRY_SIZE = 0x40
+RACE_RECORD_SIZE = 0x40
 
 
 class CourseError(ValueError):
-    """The container or one of its sections does not match the shipped layout."""
+    """The file, the section or one of the tables does not match the shipped layout."""
 
 
 def require(condition: bool, message: str) -> None:
@@ -56,7 +67,7 @@ class CourseContainer:
 
     @property
     def size(self) -> int:
-        return HEADER_SIZE + sum(len(section.data) for section in self.sections)
+        return 4 * len(self.slots) + sum(len(section.data) for section in self.sections)
 
     def section(self, slot: int) -> Section | None:
         return next((section for section in self.sections if section.slot == slot), None)
@@ -74,12 +85,31 @@ class CourseSettings:
     sub_block_offsets: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class RaceLine:
+    """One polyline: its verbatim 0x40-byte entry header and its records."""
+
+    header: bytes
+    records: tuple[bytes, ...]
+
+
+@dataclass(frozen=True)
+class RaceLines:
+    """An `ADLN` section: eight polylines and the padding that follows them."""
+
+    lines: tuple[RaceLine, ...]
+    padding: bytes
+
+
 def read_container(data: bytes) -> CourseContainer:
-    """Split one course file into its slot table and sections."""
-    require(len(data) >= HEADER_SIZE, "course container is shorter than its slot table")
-    slots = struct.unpack_from("<%dI" % SLOT_COUNT, data, 0)
+    """Split one course file (or `.ad`) into its slot table and sections."""
+    require(len(data) >= 8, "file is shorter than its slot table")
+    table_size = struct.unpack_from("<I", data, 4)[0]
+    require(table_size in (4 * RACE_SLOT_COUNT, 4 * SLOT_COUNT),
+            "slot table is not 32 or 64 entries")
+    require(len(data) >= table_size, "file is shorter than its slot table")
+    slots = struct.unpack_from("<%dI" % (table_size // 4), data, 0)
     require(slots[0] == 0, "slot 0 is not zero")
-    require(slots[1] == FIRST_SECTION_OFFSET, "slot 1 is not the end of the table")
     offsets = [offset for offset in slots if offset]
     require(offsets == sorted(offsets), "section offsets are not ascending")
     require(len(offsets) == len(set(offsets)), "two slots share one offset")
@@ -91,15 +121,18 @@ def read_container(data: bytes) -> CourseContainer:
         end = offsets[index + 1] if index + 1 < len(offsets) else len(data)
         slot = slots.index(offset)
         sections.append(Section(slot=slot, offset=offset, data=data[offset:end]))
-    require(HEADER_SIZE + sum(len(section.data) for section in sections) == len(data),
+    require(table_size + sum(len(section.data) for section in sections) == len(data),
             "sections do not tile the file")
     return CourseContainer(slots=slots, sections=tuple(sections))
 
 
 def write_container(container: CourseContainer) -> bytes:
     """Rebuild a course file from its slot table and sections."""
-    output = bytearray(HEADER_SIZE)
-    struct.pack_into("<%dI" % SLOT_COUNT, output, 0, *container.slots)
+    require(len(container.slots) in (RACE_SLOT_COUNT, SLOT_COUNT),
+            "slot table is not 32 or 64 entries")
+    require(container.slots[0] == 0, "slot 0 is not zero")
+    output = bytearray(4 * len(container.slots))
+    struct.pack_into("<%dI" % len(container.slots), output, 0, *container.slots)
     for section in container.sections:
         require(len(output) == section.offset, "section does not start where the slot says")
         output += section.data
@@ -119,3 +152,70 @@ def read_settings(section: Section) -> CourseSettings:
     return CourseSettings(version=version,
                           content=data[SETTINGS_HEADER_SIZE:SETTINGS_HEADER_SIZE + length],
                           sub_block_offsets=sub_blocks)
+
+
+def record_position(record: bytes) -> tuple[float, float, float]:
+    """The (x, z, heading) a record carries.
+
+    Positions are world units shared with the course and its `.ad` lines. The heading is a
+    tangent in radians, rotated 90 degrees from the segment direction: it tracks the stored
+    points within about 7 degrees at the shipped ~130 m spacing, so it is a road heading, not
+    an exact per-point tangent.
+    """
+    require(len(record) == RACE_RECORD_SIZE, "race record is not 0x40 bytes")
+    x, z = struct.unpack_from("<ff", record, 4)
+    heading = struct.unpack_from("<f", record, 0x24)[0]
+    return x, z, heading
+
+
+def read_lines(section: bytes) -> RaceLines:
+    """Split an `ADLN` section into its eight polylines and its padding."""
+    require(len(section) >= RACE_HEADER_SIZE, "race section is shorter than its header")
+    require(section[:4] == RACE_MAGIC, "race section is not ADLN")
+    reserved_a, reserved_b, length, reserved_c, count, table, reserved_d = \
+        struct.unpack_from("<7I", section, 4)
+    require(not (reserved_a or reserved_b or reserved_c or reserved_d),
+            "race header carries a nonzero reserved word")
+    require(count == RACE_LINE_COUNT, "race section does not hold eight lines")
+    require(table == RACE_HEADER_SIZE, "race line table is not at 0x30")
+    require(not any(section[0x20:RACE_HEADER_SIZE]), "race header padding is not zero")
+    offsets = struct.unpack_from("<%dI" % count, section, table)
+    lines = []
+    position = table + 4 * count
+    for offset in offsets:
+        require(offset == position, "race line does not follow the previous one")
+        header = section[offset:offset + RACE_ENTRY_SIZE]
+        require(len(header) == RACE_ENTRY_SIZE, "race line header is truncated")
+        start = offset + RACE_ENTRY_SIZE
+        end = start + struct.unpack_from("<I", header, 0)[0] * RACE_RECORD_SIZE
+        require(end <= len(section), "race line records exceed the section")
+        lines.append(RaceLine(header=header,
+                              records=tuple(section[at:at + RACE_RECORD_SIZE]
+                                            for at in range(start, end, RACE_RECORD_SIZE))))
+        position = end
+    require(position == length, "race length does not cover its lines")
+    return RaceLines(lines=tuple(lines), padding=section[position:])
+
+
+def write_lines(lines: RaceLines) -> bytes:
+    """Rebuild an `ADLN` section from its lines and padding."""
+    count = len(lines.lines)
+    require(count == RACE_LINE_COUNT, "race section does not hold eight lines")
+    offsets = []
+    body = bytearray()
+    for line in lines.lines:
+        require(len(line.header) == RACE_ENTRY_SIZE, "race line header is not 0x40 bytes")
+        require(len(line.records) == struct.unpack_from("<I", line.header, 0)[0],
+                "race line count does not match its records")
+        for record in line.records:
+            require(len(record) == RACE_RECORD_SIZE, "race record is not 0x40 bytes")
+        offsets.append(RACE_HEADER_SIZE + 4 * count + len(body))
+        body += line.header + b"".join(line.records)
+    length = RACE_HEADER_SIZE + 4 * count + len(body)
+    output = bytearray(RACE_HEADER_SIZE)
+    struct.pack_into("<4s7I", output, 0, RACE_MAGIC, 0, 0, length, 0, count,
+                     RACE_HEADER_SIZE, 0)
+    output += struct.pack("<%dI" % count, *offsets)
+    output += body
+    output += lines.padding
+    return bytes(output)

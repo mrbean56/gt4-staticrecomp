@@ -200,6 +200,18 @@ start grid), write it back byte-identical, then substitute a course's geometry w
 converted GT3 track. Order: Complex String first (pure geometry, no scenery), then
 Rome Circuit, then the dirt and mountain tracks.
 
+State (2026-11-26): the container is read and written for all 110 courses and all 110
+`.ad` files (`scripts/gt4_course.py`, 17 controls). The `.ad` lines are decoded: `ADLN`,
+eight polylines, a 0x30-byte header, a table of eight offsets, then one 0x40-byte entry
+header per line and 0x40-byte records carrying a position at +0x04/+0x08 and a tangent
+heading at +0x24 (a road heading within about 7 degrees at the ~130 m spacing, not an
+exact tangent). Lines 1 and 2 are the road edges, 6 a second full-length line, 3 a third
+of different density, 4 a short line across the start area, 7 a sparse line; 5 is empty.
+Seventeen `.ad` files (photo spots, the gymkhana spirals, `testcourse_100m`) carry an
+undecoded form and are kept verbatim. Section bodies (`MDLS`, `Vls0`, `Tex1`, …) are still
+opaque, and the `CRSS` content is only partly named: a record index at +0x20/+0x24, four
+sub-block offsets, world-space points that do not depend on race direction.
+
 ### D. Features — TASK-219
 
 Bigger fields are an engine change (grid slots, opponent spawn, HUD position list,
@@ -215,9 +227,12 @@ repository ships tooling and the conversion code, never assets from either disc.
 ## Unknowns that decide the schedule
 
 - Whether GT4's menus and save system enumerate cars from the SpecDB at runtime or from
-  a compiled table (Unknown; the first trim car answers it).
+  a compiled table. Answered in part (2026-11-26): names come from the string DB, the
+  roster does not come from any row table (a clone's rows change nothing, no table has
+  240 rows), so the roster is compiled or built from a table not yet found.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).
-- GT4 course section semantics (Unknown; nothing in the repository reads `crs/`).
+- GT4 course section bodies (`MDLS`, `Vls0`, `Tex1`, …) are still Unknown; the container
+  and the `.ad` polylines are read and written as of 2026-11-26.
 - Realistic effort per pipeline (not measured).

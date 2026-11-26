@@ -3538,8 +3538,22 @@ the port document; the dirt and mountain ones come after the tarmac.
   `CRSS`, `GDGT`, `RNW4`, `CRPM`), each running to the next slot's offset, so trailing padding belongs to its
   section. `read_settings` decodes the `CRSS` header: version 1, declared content length, four raw sub-block
   offsets (`apricot`: 0x3F0 of content, offsets 0x28/0x2C/0x30/0x3C0, grid table with count 8 at 0x30).
-  Every course round-trips byte-identically. Controls: `tests/python/test_gt4_course.py`, six synthetic plus two
-  real-disc tests. Section contents stay opaque; next is one section's internal tables (start grid, road surface).
+  Every course round-trips byte-identically. Controls: `tests/python/test_gt4_course.py`, 17 tests (synthetic plus
+  real disc, one walking all 110 courses and all 110 `.ad` files).
+- `.ad` decode (2026-11-26): a `.ad` is the same container with a 32-entry table, and 93 of the 110 carry `ADLN` at
+  slot 1: a 0x30-byte header (magic, declared length, count 8, table at 0x30), a table of eight offsets, then one
+  0x40-byte entry header per line (record count, then zeros) and that many 0x40-byte records. The chain of entries
+  ends exactly at the declared length in all 93. Records carry a position at +0x04/+0x08 (world units shared with
+  the course, matching the line geometry) and a tangent heading at +0x24 (within about 7 degrees of the segment
+  direction at the shipped ~130 m spacing). Line roles (High confidence): 1 and 2 the road edges, 6 a second
+  full-length line, 3 a third of different density, 4 a short near-straight line across the start area, 7 sparse and
+  often absent, 5 empty everywhere. Those 17 `.ad` files without `ADLN` (photo spots `ss_*`, the two gymkhana
+  spirals, `testcourse_100m`) start with a pointer-like form and are kept verbatim; `read_lines` refuses them.
+  `CRSS` content (2026-11-26, partially named): a record index whose count and first offset sit at +0x20 (62 courses)
+  or +0x24 (12 courses), four sub-block starts at +0x04..+0x14 tiling the content, records of 4-9 points in world
+  space (first two on the racing line, the rest 40-190 m off and 5-36 m up); it is not a start grid — counts are never
+  6 and a course and its reverse twin are byte-identical. Section bodies stay opaque; next is one `MDLS`/`Vls0`
+  section and the road surface.
 
 ### TASK-219 — Larger starting field (📋 Planned, study, mod)
 

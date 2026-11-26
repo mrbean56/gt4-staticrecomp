@@ -33,9 +33,12 @@ Ford Ka `01.
   the 24-car field now wait on the same Windows build.
 - **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American
   Showroom → Ford → New Cars list shows eight cars (Ka `01 at Cr. 12,920 first) and no clone.
-- **TASK-218's container layer landed.** `scripts/gt4_course.py` reads and writes the layout all 110 shipped `crs/`
-  courses share (64-entry offset table, 0x80-aligned tagged sections, `CRSS` settings header) and every course
-  round-trips byte-identically; controls in `tests/python/test_gt4_course.py`.
+- **TASK-218: containers and the `.ad` polylines are decoded.** `scripts/gt4_course.py` reads and writes the layout
+  all 110 courses and all 110 `.ad` files share (offset table of 64 entries for a course, 32 for a `.ad`;
+  0x80-aligned tagged sections; `CRSS` settings header) and round-trips every file byte-identically. The 93 `.ad`
+  files with `ADLN` decode into eight polylines of 0x40-byte records (position, tangent heading); line 1 and 2 are
+  the road edges, 4 a short line across the start area. The other 17 (photo spots, gymkhana spirals, `testcourse_100m`)
+  carry an undecoded form and are kept verbatim. Controls: 17 in `tests/python/test_gt4_course.py`.
 - `write_table(..., compressed=True)` now refuses a table whose version is not shipped (`0x00080001`/`0x00080003`): a
   probe script that rebuilt `GENERIC_CAR` with the reader's default dropped the version silently.
 - Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`,
