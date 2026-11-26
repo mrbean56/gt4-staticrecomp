@@ -3438,10 +3438,12 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
 - Read every `GT4_US2560` table (`GTDB` rows through the Huffman dictionary, `GTID` labels, `GTST` strings).
   Oracle from slices 120/121: `ka_01` is row 59 with name index 84, `CAR_VARIATION` row 444 of table 42, model
   index 1598 in `american_StrDB.sdb`.
-- Write a table back in the uncompressed layout, reload it and compare every row. The public "flag `0x01` means
-  uncompressed" reading is wrong for this build (every shipped table sets it and is still compressed), so the
-  game's acceptance of the written form is Unknown until milestone A3 tries it in game; the encoder we would need
-  otherwise is a patch/template stream, already decoded byte for byte.
+- Write a table back and reload it. **Settled in game (2026-11-26): the game does not read the uncompressed layout.**
+  An image whose only change was the `RACE` table written that way raced to the camera hook and then called a null
+  function pointer (`ra 0x003FD354`); the same image with the shipped field values crashed the same way, and the
+  shipped disc did not. `gt4_specdb.write_table(..., compressed=True)` now emits the shipped dictionary form (256
+  uniform eight-bit codes, one raw-row stream per row, block copy for rows over 254 bytes); all 79 tables round-trip
+  through it and the same race ran clean in game. `gt4_field_size.py` and `gt4_car_clone.py` use it.
 - Rebuild `GT4.VOL` with only that table changed and confirm every other entry is byte-identical.
 - Add one trim car of the target list to `GENERIC_CAR`, `CAR_NAME_american` and `CAR_VARIATION_american`, pointing
   at an existing model code: Mitsubishi Lancer Evolution VI GSR T.M.E. on the Evolution VI GSR body is the first
@@ -3462,8 +3464,10 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   rows under a new code (41 tables), leaving the class and event rows alone. With `--name` it also appends one string
   to each of the nine `<language>_StrDB.sdb` tables and points the cloned `CAR_NAME_*` rows at it; `write_strings`
   reproduces all ten shipped string tables byte for byte (Confirmed). Eight controls in
-  `tests/python/test_gt4_car_clone.py`, one against a built image. Image `gt4-clone-xa99.iso` (SHA-256 `b59085f9…`):
-  91 entries change (41 row tables, 41 label tables, 9 name tables), `xa_99` = "Ford Ka `01 Clone".
+  `tests/python/test_gt4_car_clone.py`, one against a built image. Image `gt4-clone-xa99.iso` (file SHA-256
+  `93dfc6e3…`): 91 entries change (41 row tables, 41 label tables, 9 name tables), `xa_99` = "Ford Ka `01 Clone".
+  **That image predates the 2026-11-26 writer fix** (its tables were written in the uncompressed layout the game does
+  not read), so it must be rebuilt with `compressed=True` before the garage test means anything.
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
@@ -3534,6 +3538,19 @@ its 32 MB.
   target and leaves the rest alone; nine controls in `tests/python/test_gt4_field_size.py`. Image
   `~/opencode/gt4/gt4-field24.iso` (SHA-256 `60e7ca91…`): only `RACE.dbt` differs, 18,351 other entries byte-identical,
   every byte outside `GT4.VOL` identical. Findings and the open code sites: `docs/GT4-LARGER-FIELD.md`.
+- **In game (2026-11-26, Bilboquet, 1.3.0-rc16 binary, owner's disc + memcard copy):** Arcade, Single Race,
+  Nürburgring Nordschleife, Ford Ka `01.
+  - Shipped `gt4.iso`: six-car entry list, race camera hook at vblank 8,889, no halt — the baseline.
+  - `gt4-field24.iso` (uncompressed writer form): reached the camera hook (vblank 41,033) and halted six frames later
+    on a null virtual call (`ra 0x003FD354`).
+  - `gt4-race-control.iso` (shipped field values, same uncompressed form): halted identically (vblank 16,097 → 16,103),
+    so the halt was the writer form, not the 24.
+  - `gt4-race-control2.iso` and `gt4-field24b.iso` (shipped dictionary form): both race, six cars, no halt.
+  - `gt4-field24c.iso` (rows at 24 **and** 469 opponent pools cycled to 23 candidates): Arcade still shows six cars.
+  - Conclusion: **Arcade Single Race does not take its field from `RACE.MaxEntries` or from the pool.** Its six comes
+    from the code (the constructors that seed `+0x118` at 6, `RaceSinglePlayerInformation__structor_0` 0x3D5AE0), so
+    the owner's request needs the **code half**; the data half governs GT Mode event rows, which is still untested
+    (needs a GT Mode save). Details: `docs/GT4-LARGER-FIELD.md`.
 - Then eight cars in one Arcade race, off by default and identical to the reference when off. 24 only if that
   measurement supports it; on the original engine four times the actors is a race-system rewrite, and the owner is told
   the measured ceiling before any work goes further.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import struct
 from pathlib import Path
 import sys
 import unittest
@@ -54,6 +55,20 @@ class RaiseTests(unittest.TestCase):
     def test_a_table_without_the_source_field_is_refused(self):
         with self.assertRaises(field_size.FieldSizeError):
             field_size.raise_fields(table_of([2, 1]), 24)
+
+    def test_pool_is_cycled_up_to_the_field_size(self):
+        entries = [bytes([value]) * 16 for value in (1, 2, 3)]
+        pool = struct.pack("<II", 3, 0) + b"".join(entries)
+        raised = field_size.raise_pool(pool, 24)
+        count, reserved = struct.unpack_from("<II", raised, 0)
+        self.assertEqual((count, reserved), (23, 0))
+        self.assertEqual(len(raised), 8 + 23 * 16)
+        self.assertEqual([raised[8 + index * 16] for index in range(23)],
+                         [1, 2, 3] * 7 + [1, 2])
+
+    def test_pool_big_enough_or_empty_is_left_alone(self):
+        self.assertIsNone(field_size.raise_pool(struct.pack("<II", 23, 0) + bytes(23 * 16), 24))
+        self.assertIsNone(field_size.raise_pool(struct.pack("<II", 0, 0), 24))
 
     def test_short_rows_are_refused(self):
         table = specdb.Table(row_count=1, row_length=0x20, compressed=False,

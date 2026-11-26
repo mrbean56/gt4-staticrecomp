@@ -131,7 +131,8 @@ def apply_clone(tables, plan: dict[str, list[tuple[str, int, int]]],
             row_count=len(rows), row_length=table.row_length, compressed=True,
             version=table.version,
             rows=[gt4_specdb.Row(row_id, data) for row_id, data in rows])
-        replacements[SPECDB_PREFIX + name_table + ".dbt"] = gt4_specdb.write_table(rewritten)
+        replacements[SPECDB_PREFIX + name_table + ".dbt"] = gt4_specdb.write_table(
+            rewritten, compressed=True)
         new_labels = gt4_specdb.LabelTable(labels.table_id, list(labels), labels.flags)
         new_labels.extend(gt4_specdb.Label(label, row_id) for label, _, row_id in entries)
         replacements[SPECDB_PREFIX + name_table + ".idi"] = gt4_specdb.write_labels(new_labels)

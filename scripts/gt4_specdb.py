@@ -7,8 +7,11 @@ patches a template row: the first symbol carries the template index in its low
 six bits, then a byte mask and the replacement bytes follow. The public prose
 says version bit 0x01 marks rows that are not compressed; every shipped table
 sets that bit and still uses the dictionary, so the reader detects the
-dictionary and row block by structure. ``write_table`` emits the uncompressed
-form the game accepts: version | 0x01, sequential row offsets and raw rows.
+dictionary and row block by structure. ``write_table`` can emit that same
+dictionary form again (``compressed=True``), which is what the game reads; the
+plain uncompressed layout it also writes is for tests only, because an image
+that stored the RACE table that way halted at race start (null call, ra
+0x003FD354).
 """
 
 from __future__ import annotations
@@ -315,8 +318,15 @@ def parse_table(data: bytes) -> Table:
 
 
 def write_table(table: Table, compressed: bool = False) -> bytes:
-    """Write the raw uncompressed form (version | 0x01) and return its bytes."""
-    require(not compressed, "GTDB compressed writing is not supported")
+    """Write the table and return its bytes.
+
+    ``compressed=True`` writes the shipped dictionary form, which is the form the game
+    reads: a control image that stored the RACE table in the uncompressed form below
+    raced up to the camera hook and then called a null function pointer (ra 0x003FD354).
+    The uncompressed form (``compressed=False``) stays for byte-layout tests.
+    """
+    if compressed:
+        return _write_compressed(table)
     require(table.row_count == len(table.rows), "GTDB row count mismatch")
     require(0 <= table.row_count <= MAX_ROWS, "GTDB row count out of range")
     require(0 < table.row_length <= MAX_ROW_LENGTH, "GTDB row length out of range")
@@ -335,6 +345,45 @@ def write_table(table: Table, compressed: bool = False) -> bytes:
         for index, row in enumerate(table.rows)
     )
     return header + infos + b"".join(row.data for row in table.rows)
+
+
+def _write_compressed(table: Table) -> bytes:
+    """Write the shipped dictionary form, one raw-row stream per row.
+
+    Every byte value gets a uniform eight-bit code, so a symbol is one stream byte and
+    each row is ``count = 1 + row_length``, the raw-row header 0x40, then the row. A
+    stream carries its symbol count in one byte, so rows longer than 254 bytes go into
+    the block instead and each row copies its block entry (an index below 64).
+    """
+    require(table.row_count == len(table.rows), "GTDB row count mismatch")
+    require(0 <= table.row_count <= MAX_ROWS, "GTDB row count out of range")
+    require(0 < table.row_length <= MAX_ROW_LENGTH, "GTDB row length out of range")
+    for row in table.rows:
+        require(len(row.data) == table.row_length, "GTDB row length mismatch")
+    header = struct.pack("<4sIII", GTDB_MAGIC, table.version,
+                         table.row_count, table.row_length)
+    dictionary = (
+        struct.pack("<II", DICTIONARY_FIXED_SIZE + 256 * CODE_DEFINITION_SIZE, 256)
+        + bytes(value for index in range(256) for value in (index, 8))
+        + b"".join(struct.pack("<BBHI", 8, index, 0, index) for index in range(256))
+    )
+    if table.row_length <= 254:
+        block = struct.pack("<II", BLOCK_HEADER_SIZE, 0)
+        streams = [bytes((1 + table.row_length, 0x40)) + row.data
+                   for row in table.rows]
+    else:
+        require(table.row_count <= 64, "GTDB row is too long to copy from a block")
+        block = (struct.pack("<II",
+                             BLOCK_HEADER_SIZE + table.row_count * table.row_length,
+                             table.row_count)
+                 + b"".join(row.data for row in table.rows))
+        streams = [bytes((1, index)) for index in range(table.row_count)]
+    infos = b""
+    offset = 0
+    for row, stream in zip(table.rows, streams):
+        infos += struct.pack("<II", row.row_id, offset)
+        offset += len(stream)
+    return header + infos + dictionary + block + b"".join(streams)
 
 
 def parse_labels(data: bytes) -> LabelTable:

@@ -11,9 +11,9 @@ The opponent pool (``specdb/GT4_US2560/RACES/<row id>``) is a candidate list, no
 (``it_alfa_gta_0001``), so the engine already repeats pool entries to fill the field.
 Raising ``MaxEntries`` therefore needs no pool change.
 
-The table is re-serialized in the uncompressed writer form, which is the layout
-``scripts/gt4_volume_write.py`` stores when a table changes. Other entries keep their
-shipped bytes.
+The table is re-serialized in the shipped dictionary form (``write_table(..., compressed=True)``);
+the plain uncompressed layout is not what the game reads: a control image that stored the RACE
+table that way halted at race start. Other entries keep their shipped bytes.
 
 Usage:
   gt4_field_size.py --iso <disc.iso> --output <mod.iso> [--field-size 24]
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import struct
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -69,7 +70,7 @@ def raise_fields(table: gt4_specdb.Table, target: int = 24, source: int = SIX
         changes.append((row.row_id, source, target))
     require(changes, "no RACE row carries a field size of %d" % source)
     rewritten = replace(table, rows=rows)
-    return gt4_specdb.write_table(rewritten), changes
+    return gt4_specdb.write_table(rewritten, compressed=True), changes
 
 
 def inspect(source: Path) -> dict:
@@ -105,26 +106,60 @@ def _payload(stream, catalogue, path: str) -> bytes:
     return gt4_volume.decode_payload(raw, record.kind, record.size)
 
 
+POOL_ENTRY_SIZE = 16
+
+
+def pool_paths(catalogue) -> dict[int, str]:
+    """Map each race row id to its pool path (the file name ends in the row id)."""
+    return {int(path[len(RACES_PREFIX):][8:], 16): path
+            for path in catalogue.files if path.startswith(RACES_PREFIX)}
+
+
+def raise_pool(data: bytes, target: int = 24) -> bytes | None:
+    """Cycle a race's candidates up to ``target - 1`` entries; None when it is big enough."""
+    require(len(data) >= 8, "race pool header is truncated")
+    count, reserved = struct.unpack_from("<II", data, 0)
+    require(len(data) == 8 + count * POOL_ENTRY_SIZE, "race pool length mismatch")
+    needed = target - 1
+    if count == 0 or count >= needed:
+        return None
+    entries = [data[8 + index * POOL_ENTRY_SIZE:8 + (index + 1) * POOL_ENTRY_SIZE]
+               for index in range(count)]
+    raised = b"".join(entries[index % count] for index in range(needed))
+    return struct.pack("<II", needed, reserved) + raised
+
+
 def apply_to_iso(source: Path, destination: Path, target: int = 24) -> dict:
-    """Copy the pinned image, raising every six-car field to ``target``."""
+    """Copy the pinned image, raising every six-car field and its opponent pool."""
     require(not destination.exists(), "output already exists")
+    replacements = {}
+    pools_raised = 0
     with source.open("rb") as stream:
         catalogue = gt4_volume_write.read_catalogue(
             stream, gt4_volume_write.VOLUME_OFFSET, gt4_volume_write.VOLUME_SIZE)
         require(RACE_TABLE in catalogue.files, "RACE table is absent from the volume")
         table = gt4_specdb.parse_table(_payload(stream, catalogue, RACE_TABLE))
         encoded, changes = raise_fields(table, target)
-    report = gt4_volume_write.rewrite_iso(source, destination, {RACE_TABLE: encoded})
+        replacements[RACE_TABLE] = encoded
+        pools = pool_paths(catalogue)
+        for row_id, _, _ in changes:
+            path = pools.get(row_id)
+            if path is None:
+                continue
+            raised = raise_pool(_payload(stream, catalogue, path), target)
+            if raised is not None:
+                replacements[path] = raised
+                pools_raised += 1
+    report = gt4_volume_write.rewrite_iso(source, destination, replacements)
     replaced = [entry for entry in report.entries if entry.replaced]
-    require([entry.path for entry in replaced] == [RACE_TABLE],
-            "the rebuilt image replaced more than the RACE table")
+    require(sorted(entry.path for entry in replaced) == sorted(replacements),
+            "the rebuilt image replaced entries other than the field tables")
     return {
         "written_sha256": report.written_sha256,
         "field_size": target,
         "races_changed": len(changes),
+        "pools_raised": pools_raised,
         "table_decoded_bytes": len(encoded),
-        "table_stored_bytes": replaced[0].stored_size,
-        "table_reused_stored": replaced[0].reused_stored,
     }
 
 

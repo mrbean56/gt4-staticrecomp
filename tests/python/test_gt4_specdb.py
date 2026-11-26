@@ -172,9 +172,23 @@ class TableTests(unittest.TestCase):
             [(row.row_id, row.data) for row in table.rows],
         )
 
-    def test_compressed_write_is_rejected(self):
+    def test_compressed_write_round_trips(self):
+        table = specdb.parse_table(self.data)
+        blob = specdb.write_table(table, compressed=True)
+        parsed = specdb.parse_table(blob)
+        self.assertTrue(parsed.compressed)
+        self.assertEqual(
+            [(row.row_id, row.data) for row in parsed.rows],
+            [(row.row_id, row.data) for row in table.rows],
+        )
+
+    def test_compressed_write_places_long_rows_in_the_block(self):
+        rows = [specdb.Row(50 + index, bytes([index]) * 480) for index in range(3)]
+        table = specdb.Table(3, 480, True, rows)
+        parsed = specdb.parse_table(specdb.write_table(table, compressed=True))
+        self.assertEqual([row.data for row in parsed.rows], [row.data for row in rows])
         with self.assertRaises(specdb.SpecDbError):
-            specdb.write_table(specdb.parse_table(self.data), compressed=True)
+            specdb.write_table(specdb.Table(65, 480, True, rows * 22), compressed=True)
 
     def test_bad_magic(self):
         data = bytearray(self.data)
@@ -335,11 +349,13 @@ class EveryTableTests(unittest.TestCase):
                     gt4_volume.VOLUME_OFFSET + gt4_volume.VOLUME_SIZE)
                 data = gt4_volume.decode_payload(raw, record.kind, record.size)
                 table = specdb.parse_table(data)
-                again = specdb.parse_table(specdb.write_table(table))
-                self.assertEqual([row.data for row in table.rows],
-                                 [row.data for row in again.rows], path)
-                self.assertEqual([row.row_id for row in table.rows],
-                                 [row.row_id for row in again.rows], path)
+                for written in (specdb.write_table(table),
+                                specdb.write_table(table, compressed=True)):
+                    again = specdb.parse_table(written)
+                    self.assertEqual([row.data for row in table.rows],
+                                     [row.data for row in again.rows], path)
+                    self.assertEqual([row.row_id for row in table.rows],
+                                     [row.row_id for row in again.rows], path)
 
     def test_all_10_shipped_string_tables_are_byte_identical(self):
         import gt4_volume

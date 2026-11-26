@@ -1,5 +1,27 @@
 # Current Status
 
+## In game: the writer form was wrong, and Arcade ignores the field data (2026-11-26)
+
+TASK-219 and TASK-216, first in-game runs of the port's images on Bilboquet (1.3.0-rc16 binary, the owner's disc and
+a copy of the launcher's memory card, discs passed with `--disc`). Arcade, Single Race, Nürburgring Nordschleife,
+Ford Ka `01.
+
+- **The uncompressed GTDB writer layout does not run.** `gt4-field24.iso` reached the race camera hook and halted six
+  frames later on a null virtual call (`no translated code at 0x00000000`, `ra 0x003FD354`). A storage-only control
+  with the shipped field values written the same way halted exactly the same, and the shipped disc did not, so the
+  fault was the form, not the 24. `gt4_specdb.write_table(..., compressed=True)` now writes the shipped dictionary
+  form (uniform eight-bit codes, one raw-row stream per row, block copy for rows over 254 bytes); all 79 tables
+  round-trip, 158 GT4 controls pass, and the race runs clean in game. The field and clone tools use it.
+- **Arcade Single Race does not take its field from the data.** With `RACE.MaxEntries` at 24 and the opponent pools
+  cycled up to 23 candidates (`gt4-field24c.iso`), the entry list and the grid stayed at six. Arcade's six is the code
+  default seeded in the race-information constructors (`RaceSinglePlayerInformation__structor_0`, 0x3D5AE0, `+0x118`),
+  so the 24-car request needs the code half; the data half applies to GT Mode event rows, still untested (no GT Mode
+  save). Earlier note corrected: the pool does cap the candidates, so the data mod now raises rows and pools together.
+- `gt4-rebuilt.iso` boots but its re-serialized `GENERIC_CAR` (uncompressed form) is misread: the Arcade car screen
+  shows `Type:--`, nonsense power and refuses the car. Another proof that a boot check does not validate an image.
+- Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`
+  (file SHA-256). The three earlier images are superseded. Details: `docs/GT4-LARGER-FIELD.md`.
+
 ## SpecDB: every table decodes, and a car is a label set (2026-11-24)
 
 TASK-216 groundwork. All 79 `GT4_US2560` tables parse and round-trip, and all 79 label tables are byte-identical
