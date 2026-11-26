@@ -1,5 +1,33 @@
 # Current Status
 
+## In game: a cloned car appears and races (2026-11-26)
+
+TASK-216, second in-game session on Bilboquet (1.3.0-rc16, the owner's disc, `card-blank.ps2`, Tsukuba).
+
+- **The cloned car races.** `gt4-clone-full41-list.iso` (file SHA-256 `4d3b6a5a…`) is the tool's default clone
+  (`gt4_car_clone.py --car ka_01 --as ka_02 --name "Ford Ka '01 Clone"`: 87 car-owned rows in 41 tables, its
+  `CARS/0000000000000436` record, and `ka_02` in the three car-list files). The Ford page shows
+  **"Ford Ka '01 Clone"** on the Ka model, the Driving Options read `Type:FF`, 59 HP/5,000 rpm and 77.39 ft.lb,
+  and the Tsukuba load goes into a **six-car race with a live HUD** (capture frame 20,500). The same clone with
+  only the player's entries relabelled (`gt4-clone-full41-player.iso`, file SHA-256 `0e3138d0…`, enemy lists
+  untouched) races to the same frames, so that is the recipe for a normal car: boot `car_carlist` +
+  `garage_carlist` + the maker's list.
+- **The "race-start stall" was the loading screen, and it is the class rows.** The frozen images sit on the
+  loading screen with an animating spinner and **no disc reads**; the shipped Ka as the player's car freezes too,
+  so the clone only has to exist and resolve. Every image built with `--include-scoped` (95 rows in 44 tables:
+  8 extra rows in `DEFAULT_PARAM`, `DEFAULT_PARTS`, `ENEMY_CARS`) freezes, including the same 44-table clone with
+  the same relabelled lists as the racing image (`gt4-clone-record15.iso`, file SHA-256 `0f8b78d2…`, Tsukuba).
+  Dropping only the 3 `ENEMY_CARS` rows did not help, and `gt4-clone-parts.iso` (the racing 41-table plan plus
+  only the 4 `DEFAULT_PARTS` rows, file SHA-256 `6e27bb9c…`) freezes identically, so the `DEFAULT_PARTS` rows are
+  the trigger. `--include-scoped` stays off.
+- **Probes that shrink the search.** The identity row id is not the trigger: the clone at row id 23 (a free id
+  inside the shipped range) freezes exactly like 1078, every captured frame from 13,500 to 20,000
+  pixel-identical. The freeze reproduces on El Capitan (not course-specific), and both a lone CARS record and
+  the Ka's own code renamed in place race,
+  so the labels, roster resolution and catalogue insertion are sound.
+- Open: a GT Mode dealer/garage walk with the racing clone, and the model side (TASK-217). The 24-car code half
+  stays blocked on the owner's Windows build PC (TASK-219).
+
 ## In game: the writer form was wrong, and Arcade ignores the field data (2026-11-26)
 
 TASK-219 and TASK-216, first in-game runs of the port's images on Bilboquet (1.3.0-rc16 binary, the owner's disc and

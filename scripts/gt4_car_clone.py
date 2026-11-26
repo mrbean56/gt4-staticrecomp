@@ -9,7 +9,8 @@ Two deliberate limits:
 
 - The class and event rows (`pr_…`, `pt_…`, `df_…`, `gt4r_…`, `gt4sample_…`) are not cloned by
   default: they belong to a class or an event, not to the car, and a clone that added them would
-  silently enter events.
+  silently enter events. They are also not race-safe yet: an image built with `--include-scoped` sits
+  on the loading screen (2026-11-26), while the default plan appears and races.
 - Strings are reused, so the clone displays its donor's name unless `--name` is given.
 - The clone also gets its own `specdb/GT4_US2560/CARS/<row id>` index record, which the menus
   load for the car code: a row set without one builds a null car (TASK-222).
@@ -167,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan", action="store_true",
                         help="print the plan without writing an image")
     parser.add_argument("--include-scoped", action="store_true",
-                        help="also clone the class and event rows")
+                        help="also clone the class and event rows (leaves the race load hanging; experimental)")
     parser.add_argument("--name", help="give the clone its own name in every language table")
     arguments = parser.parse_args(argv)
     tables = gt4_car_map.read_specdb(arguments.iso)

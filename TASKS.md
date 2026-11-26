@@ -3470,7 +3470,28 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   not read), so it was rebuilt with the dictionary writer as `gt4-clone-xa99b.iso` (file SHA-256 `f640bfb3…`).
 - Milestone A4 in game (2026-11-26, Arcade, Ford Ka `01): the clone image boots, the car screen reads the donor
   correctly (`Type:FF`, 59 HP/5,000 rpm, 77.39 ft.lb/2,500 rpm — the earlier misread was the writer form), and races
-  load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt.
+  load and run at Tsukuba and Nürburgring Nordschleife with six cars, HUD and no halt (the clone itself was not
+  listed there; its labels were still appended and therefore unfindable).
+- **A cloned car appears and races (2026-11-26, Confirmed in game).** `gt4-clone-full41-list.iso` (file SHA-256
+  `4d3b6a5a…`) is `gt4_car_clone.py --car ka_01 --as ka_02 --name "Ford Ka '01 Clone"` with the tool's **default**
+  plan (87 car-owned rows in 41 tables), its `CARS/0000000000000436` record, and `ka_02` in the three car-list
+  files. The Ford page shows "Ford Ka '01 Clone" on the Ka model, the Driving Options read `Type:FF`, 59 HP/5,000
+  rpm and 77.39 ft.lb, and Tsukuba loads into a six-car race with a live HUD (frame 20,500). Relabelling only the
+  boot `car_carlist` + `garage_carlist` + the maker's list (`gt4-clone-full41-player.iso`, file SHA-256
+  `0e3138d0…`) is the recipe for a normal, non-enemy car: it races to the same captured frames with the enemy
+  lists untouched.
+- **The class and event rows block the race load (High confidence).** Every image built with `--include-scoped`
+  (95 rows in 44 tables: 8 extra rows in `DEFAULT_PARAM`, `DEFAULT_PARTS`, `ENEMY_CARS`) sits on the loading
+  screen with an animating spinner and no disc reads, including the shipped Ka as the player's car. `record15`
+  (same 44-table clone and the same relabelled lists as the racing image) freezes at Tsukuba;
+  `gt4-clone-noenemy.iso` (the same minus the 3 `ENEMY_CARS` rows) still freezes, and `gt4-clone-parts.iso` (the
+  racing 41-table plan plus only the 4 `DEFAULT_PARTS` rows, file SHA-256 `6e27bb9c…`) freezes identically, so
+  the `DEFAULT_PARTS` rows are the trigger. `--include-scoped` stays off.
+- **The freeze is not the identity row id or the course (Confirmed).** The clone at row id 23 (a free id inside
+  the shipped range) freezes exactly like 1078, every captured frame from 13,500 to 20,000 pixel-identical;
+  the freeze reproduces at El Capitan. A lone CARS record (`gt4-cars-insert-only.iso`) and the Ka's own code
+  renamed in place
+  (`gt4-rename-only.iso`) both race, so the label tables, roster resolution and catalogue insertion are sound.
 - **The clone's rows landing is not enough** (2026-11-26, Confirmed in game). In the rebuilt image `GENERIC_CAR` and
   `CAR_VARIATION_american` go from 722 to 723 rows and `ARCADEINFO_NORMAL` from 721 to 722 (new row 1078, the donor's
   fields), and a clone of a listed car (`ka_02`, 95 rows in 44 tables) reaches the car screen, but neither the Arcade

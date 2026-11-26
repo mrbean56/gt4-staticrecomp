@@ -238,9 +238,13 @@ repository ships tooling and the conversion code, never assets from either disc.
   row id, and the menu loads `specdb/GT4_US2560/CARS/<row id>`, a ~1.2 KB per-car record.
   A new row id without that record builds a null car and crashes (`ra 0x0031C8A8`). The
   record's layout and the catalogue insertion are implemented (TASK-222), and a label must
-  go into its `.idi` table in (length, name) order because the engine binary-searches it:
-  with both, the Ford page lists the clone in game and the race load names it. The race
-  start is the last check.
+  go into its `.idi` table in (length, name) order because the engine binary-searches it.
+  With all of that, a clone appears in the maker page, the load screen names it and the race
+  starts and runs at Tsukuba — **with the tool's default plan (87 car-owned rows in 41
+  tables)**. Cloning the class and event rows too (`--include-scoped`, 95 rows in 44 tables)
+  leaves the car visible but the race load never completes, and the four `DEFAULT_PARTS`
+  rows alone reproduce it (Confirmed in game 2026-11-26), so the default plan is the
+  supported one.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).
