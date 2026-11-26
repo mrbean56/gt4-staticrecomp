@@ -22,6 +22,10 @@ magic, size complement, raw DEFLATE). When the decoded payload is unchanged the
 stored bytes are copied, so an unchanged entry never moves a byte. Entries keep
 their shipped offset unless a growing neighbour needs the space.
 
+A new catalogue path is inserted too (``additions``): the key is a sibling's
+parent id plus the name, a full leaf or index page is packed and split, and the
+payload is appended after the last entry.
+
 The volume keeps its shipped extent and page allocation: the catalogue must
 still fit the pages it was allocated, and the payload layout must fit the
 existing GT4.VOL extent. A change that needs either to grow is refused, not
@@ -457,31 +461,46 @@ def page_data_end(page: TocPage) -> int:
 
 
 def pack_page(page: TocPage, entries: Sequence[TocEntry]) -> TocPage:
-    """Lay entries out from offset 12 on a fresh page: keys, then metadata."""
+    """Lay entries out compactly, each key followed by its metadata (shipped form)."""
     table_start = PAGE_BYTES - len(entries) * 8 - 4
     cursor = 12
-    key_offsets = []
-    for entry in entries:
-        key_offsets.append(cursor)
-        cursor += len(entry.key)
-    cursor = align4(cursor)
-    meta_offsets = []
-    for entry in entries:
-        if page.kind == 0:
-            meta_offsets.append(cursor)
-            require(entry.meta_size == len(entry.meta), "metadata size mismatch")
-            cursor += entry.meta_size
-            cursor = align4(cursor)
-        else:
-            meta_offsets.append(None)
-    require(cursor <= table_start, "page entries do not fit their slots")
     packed = []
-    for entry, key_offset, meta_offset in zip(entries, key_offsets, meta_offsets):
-        if meta_offset is None:
-            packed.append(replace(entry, key_offset=key_offset))
-        else:
+    for entry in entries:
+        key_offset = cursor
+        cursor = align4(cursor + len(entry.key))
+        if page.kind == 0:
+            require(entry.meta_size == len(entry.meta), "metadata size mismatch")
+            meta_offset = cursor
+            cursor = align4(cursor + len(entry.meta))
             packed.append(replace(entry, key_offset=key_offset, meta_offset=meta_offset))
+        else:
+            packed.append(replace(entry, key_offset=key_offset))
+    require(cursor <= table_start, "page entries do not fit their slots")
     return replace(page, entries=tuple(packed), layout=bytes(PAGE_BYTES))
+
+
+def refresh_trailers(pages: list[TocPage], changed: set[int]) -> None:
+    """Rebuild each changed page's trailer from the page links.
+
+    A leaf stores its data end; an index page stores the last page of its chain,
+    reached from its first child through the ``next_page`` links (the root's
+    chain is the index pages, so it stores the last index page).
+    """
+    for page_id in sorted(changed):
+        page = pages[page_id]
+        if page.kind == 0:
+            trailer = struct.pack("<HH", 0, align4(page_data_end(page)))
+        else:
+            require(bool(page.entries), "index page has no children")
+            last = page.entries[0].meta_offset | (page.entries[0].meta_size << 16)
+            seen = {page_id, last}
+            while pages[last].next_page >= 0:
+                last = pages[last].next_page
+                require(last not in seen, "catalogue page chain loops")
+                seen.add(last)
+            trailer = struct.pack("<HH", last, 0)
+        if trailer != page.trailer:
+            pages[page_id] = replace(page, trailer=trailer)
 
 
 def insert_leaf_entry(page: TocPage, slot: int, key: bytes,
@@ -498,19 +517,6 @@ def insert_leaf_entry(page: TocPage, slot: int, key: bytes,
     return replace(page, entries=tuple(entries))
 
 
-def insert_index_entry(page: TocPage, slot: int, key: bytes,
-                       child: int) -> TocPage | None:
-    """Insert one child entry in an index page's free space; None when it does not fit."""
-    require(page.kind == 1, "child entry needs an index page")
-    table_start = PAGE_BYTES - (len(page.entries) + 1) * 8 - 4
-    key_offset = page_data_end(page)
-    if key_offset + len(key) > table_start:
-        return None
-    entries = list(page.entries)
-    entries.insert(slot, TocEntry(key_offset, key, child & 0xFFFF, child >> 16))
-    return replace(page, entries=tuple(entries))
-
-
 def split_page(page: TocPage, entries: Sequence[TocEntry]) -> tuple[TocPage, TocPage]:
     """Split a page's entries in half, both halves packed on fresh pages."""
     require(len(entries) >= 4, "page is too small to split")
@@ -519,26 +525,39 @@ def split_page(page: TocPage, entries: Sequence[TocEntry]) -> tuple[TocPage, Toc
 
 
 def find_leaf_slot(pages: Sequence[TocPage], key: bytes) -> tuple[int, int]:
-    """Return the leaf and slot where a key belongs, by catalogue order."""
-    last = None
-    for page_id, page in enumerate(pages):
-        if page.kind != 0:
-            continue
-        for slot, entry in enumerate(page.entries):
-            if entry.key >= key:
-                return page_id, slot
-        last = (page_id, len(page.entries))
-    raise VolumeWriteError("key sorts after the catalogue's last entry: " + repr(last))
+    """Return the leaf and slot where a key belongs, by descending the page tree.
+
+    The tree is read the way the game reads it: at an index page the first entry
+    whose key is greater than the wanted key names the child, and a key past every
+    entry continues at the page named by the page's trailer.
+    """
+    page_id = 0
+    seen = set()
+    while True:
+        page = pages[page_id]
+        if page.kind == 0:
+            for slot, entry in enumerate(page.entries):
+                if entry.key >= key:
+                    return page_id, slot
+            return page_id, len(page.entries)
+        require(page_id not in seen, "catalogue page tree loops")
+        seen.add(page_id)
+        child = None
+        for entry in page.entries:
+            if entry.key > key:
+                child = entry.meta_offset | (entry.meta_size << 16)
+                break
+        if child is None:
+            child = struct.unpack("<HH", page.trailer)[0]
+        page_id = child
 
 
 def entries_fit(page: TocPage, entries: Sequence[TocEntry]) -> bool:
-    """Whether a set of entries fits a page packed from offset 12."""
+    """Whether a set of entries fits a page packed key-metadata from offset 12."""
     cursor = 12
     for entry in entries:
-        cursor += len(entry.key)
-    cursor = align4(cursor)
-    if page.kind == 0:
-        for entry in entries:
+        cursor = align4(cursor + len(entry.key))
+        if page.kind == 0:
             cursor = align4(cursor + entry.meta_size)
     return cursor <= PAGE_BYTES - len(entries) * 8 - 4
 
@@ -577,7 +596,11 @@ def insert_child(pages: list[TocPage], lower: int, first_key: bytes, upper: int,
         pages[page.next_page] = replace(pages[page.next_page], previous_page=new_id)
         changed.add(page.next_page)
     require(parent_id != 0, "catalogue root is full")
-    insert_child(pages, parent_id, upper_page.entries[0].key, new_id, changed)
+    # An index entry's key is the first key of the next child, so the upper
+    # half's range starts at the key just before its first entry.
+    separator = (upper_page.entries[0].key if page.kind == 0
+                 else lower_page.entries[-1].key)
+    insert_child(pages, parent_id, separator, new_id, changed)
 
 
 def insert_file_entry(pages: list[TocPage], key: bytes, meta: bytes,
@@ -720,6 +743,7 @@ def build_plan(stream, origin: int, volume_size: int,
         key = parent.to_bytes(4, "big") + path.rpartition("/")[2].encode("utf-8")
         insert_file_entry(pages, key, new_file_meta(data_page, stored_size, size), changed)
     require(len(pages) <= 1 << 16, "catalogue page id space exhausted")
+    refresh_trailers(pages, changed)
     stored_pages = []
     for index, page in enumerate(pages):
         if index in changed or index >= len(catalogue.stored_pages):

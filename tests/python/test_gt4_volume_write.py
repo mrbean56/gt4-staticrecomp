@@ -614,6 +614,46 @@ class RealDiscTests(unittest.TestCase):
                              (other.kind, other.offset, other.stored_size, other.size), path)
 
 
+    def assert_tree_walk(self, catalogue):
+        """Every record is found by the game's tree walk (first greater key, else trailer)."""
+        for path, record in catalogue.files.items():
+            key = record.parent.to_bytes(4, "big") + path.rpartition("/")[2].encode("utf-8")
+            page_id, seen = 0, set()
+            while True:
+                page = catalogue.page_structures[page_id]
+                if page.kind == 0:
+                    self.assertEqual(page_id, record.toc_page, path)
+                    slots = [slot for slot, entry in enumerate(page.entries)
+                             if entry.key == key]
+                    self.assertEqual(slots, [record.toc_slot], path)
+                    break
+                self.assertNotIn(page_id, seen, path)
+                seen.add(page_id)
+                child = None
+                for entry in page.entries:
+                    if entry.key > key:
+                        child = entry.meta_offset | (entry.meta_size << 16)
+                        break
+                if child is None:
+                    child = struct.unpack("<HH", page.trailer)[0]
+                page_id = child
+
+    def assert_trailers(self, catalogue):
+        """Every page trailer matches its page links (leaf data end, index chain end)."""
+        for page_id, page in enumerate(catalogue.page_structures):
+            first, second = struct.unpack("<HH", page.trailer)
+            if page.kind == 0:
+                self.assertEqual((first, second), (0, writer.align4(writer.page_data_end(page))),
+                                 page_id)
+                continue
+            last = page.entries[0].meta_offset | (page.entries[0].meta_size << 16)
+            seen = {last}
+            while catalogue.page_structures[last].next_page >= 0:
+                last = catalogue.page_structures[last].next_page
+                self.assertNotIn(last, seen, page_id)
+                seen.add(last)
+            self.assertEqual(first, last, page_id)
+
     def test_adding_a_cars_record_splits_the_leaf_and_keeps_every_file(self):
         record = bytes(range(256)) * 4 + bytes(128)
         path = "specdb/GT4_US2560/CARS/0000000000000436"
@@ -639,6 +679,8 @@ class RealDiscTests(unittest.TestCase):
             max(record.offset + record.stored_size for record in source.files.values()))
         for page in after.page_structures:
             self.assertEqual(list(page.entries), sorted(page.entries, key=lambda entry: entry.key))
+        self.assert_trailers(after)
+        self.assert_tree_walk(after)
         for page_id, page in enumerate(after.page_structures):
             if page.next_page < 0:
                 continue
@@ -664,6 +706,8 @@ class RealDiscTests(unittest.TestCase):
             self.assertEqual(decoded, additions[path])
         offsets = [after.files[path].offset for path in paths]
         self.assertEqual(offsets, sorted(offsets))
+        self.assert_trailers(after)
+        self.assert_tree_walk(after)
 
 
 if __name__ == "__main__":

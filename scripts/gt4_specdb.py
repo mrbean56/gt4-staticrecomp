@@ -414,12 +414,17 @@ def parse_labels(data: bytes) -> LabelTable:
 
 
 def write_labels(labels: LabelTable) -> bytes:
-    """Write a GTID label table: keys in the given order, names NUL-terminated and even-aligned."""
-    count = len(labels)
+    """Write a GTID label table: keys by (name length, name), names NUL-terminated and even-aligned.
+
+    Every shipped label table is in that order because the game binary-searches it;
+    a key stored anywhere else is not found.
+    """
+    ordered = sorted(labels, key=lambda label: (len(label.name), label.name))
+    count = len(ordered)
     require(0 <= count <= MAX_ROWS, "GTID key count out of range")
     area = bytearray()
     keys = []
-    for label in labels:
+    for label in ordered:
         keys.append((len(area), label.row_id))
         raw = label.name.encode("latin-1") + b"\x00"
         require(1 <= len(raw) <= MAX_ROW_LENGTH, "GTID name length out of range")

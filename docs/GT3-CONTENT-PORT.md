@@ -176,9 +176,11 @@ Ka's `ka_01` with `m3_04` in `ford_carlist` puts the BMW M3 '04 page under Ford 
 own data (`gt4-arcadelist-m3.iso`); the `Ford N cars` line is a separate `*_carnum` script
 object, so it stayed at five. What the clone still lacks (High confidence) is the per-car
 `CARS/<row id>` record: renaming the Ka's own label to `ka_02` (row ids and `CARS/…003B`
-untouched, `gt4-row59-ka02.iso`) loads it normally, while a new row id has no record. A row-level add therefore needs a generated CARS record
-and a new catalogue entry — the catalogue's CARS leaves are full (42 entries, 19 bytes
-free), so that work includes a leaf split. It is data-side, no build: TASK-222.
+untouched, `gt4-row59-ka02.iso`) loads it normally, while a new row id has no record.
+That record is now generated and inserted: it is `u32 count, u32 0` and 16-byte
+`(row id, table id, letter, 0)` entries, the writer splits the full CARS leaf and its
+index page to add the catalogue entry, and `gt4_car_clone.py` writes both. Data-side,
+no build: TASK-222.
 
 ### B. Cars with new art — TASK-217
 
@@ -234,9 +236,11 @@ repository ships tooling and the conversion code, never assets from either disc.
 - How a car code becomes a car. Answered (2026-11-26): the roster is the per-maker lists
   in `projects/<mode>/US_carlist.adc`; a code label resolves through its `.idi` label to a
   row id, and the menu loads `specdb/GT4_US2560/CARS/<row id>`, a ~1.2 KB per-car record.
-  A new row id without that record builds a null car and crashes (`ra 0x0031C8A8`). What
-  the record's fields mean, and how to insert a new catalogue entry and CARS record, is
-  the TASK-222 gate.
+  A new row id without that record builds a null car and crashes (`ra 0x0031C8A8`). The
+  record's layout and the catalogue insertion are implemented (TASK-222), and a label must
+  go into its `.idi` table in (length, name) order because the engine binary-searches it:
+  with both, the Ford page lists the clone in game and the race load names it. The race
+  start is the last check.
 - Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).

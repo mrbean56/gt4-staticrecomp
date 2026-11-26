@@ -39,6 +39,18 @@ class RealDiscTests(unittest.TestCase):
         self.assertEqual(plan["CHASSIS"], [("ch_xa_99_a", 1441, max(
             row.row_id for row in self.tables["CHASSIS"][1].rows) + 1)])
 
+    def test_the_identity_tables_share_one_new_car_id(self):
+        """A car keeps one row id across every identity table, in every language."""
+        identity = ("GENERIC_CAR", "ARCADEINFO_NORMAL") + tuple(
+            base + "_" + language for base in ("CAR_NAME", "CAR_VARIATION")
+            for language in car_clone.LANGUAGES)
+        donor = {name: next(label.row_id for label in self.tables[name][0]
+                            if label.name == "ka_01") for name in identity}
+        self.assertEqual(set(donor.values()), {59})
+        plan = car_clone.plan_clone(self.tables, "ka_01", "xa_99")
+        clones = {name: plan[name][0][2] for name in identity}
+        self.assertEqual(set(clones.values()), {1078})
+
     def test_every_new_label_and_id_is_free(self):
         plan = car_clone.plan_clone(self.tables, "ka_01", "xa_99")
         for name, entries in plan.items():
@@ -98,6 +110,38 @@ class RealDiscTests(unittest.TestCase):
                     next(row.data for row in rows.rows if row.row_id == new_id),
                     next(row.data for row in table.rows if row.row_id == source), name)
 
+
+    def test_a_written_label_table_stays_binary_searchable(self):
+        """The game binary-searches labels by (length, name); every key must be found."""
+        plan = car_clone.plan_clone(self.tables, "ka_01", "xa_99")
+        replacements = car_clone.apply_clone(self.tables, plan)
+
+        def look_up(labels, wanted):
+            low, high = 0, len(labels) - 1
+            key = (len(wanted), wanted)
+            while low <= high:
+                middle = (low + high) // 2
+                probe = labels[middle].name
+                if (len(probe), probe) < key:
+                    low = middle + 1
+                elif (len(probe), probe) > key:
+                    high = middle - 1
+                else:
+                    return labels[middle]
+            return None
+
+        for name in plan:
+            shipped, _ = self.tables[name]
+            ordered = [(len(label.name), label.name) for label in shipped]
+            self.assertEqual(ordered, sorted(ordered), name)
+            labels = specdb.parse_labels(
+                replacements[car_clone.SPECDB_PREFIX + name + ".idi"])
+            for label in shipped:
+                self.assertIsNotNone(look_up(labels, label.name), (name, label.name))
+            for label, _, new_id in plan[name]:
+                found = look_up(labels, label)
+                self.assertIsNotNone(found, (name, label))
+                self.assertEqual(found.row_id, new_id, (name, label))
 
 if __name__ == "__main__":
     unittest.main()

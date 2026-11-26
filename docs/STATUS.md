@@ -43,11 +43,21 @@ Ford Ka `01.
   Packing the touched pages shrinks the catalogue, so the split fits the shipped allocation without moving
   `data_start`. Two additions, their order and every unchanged file are tested; `gt4_car_clone.py` writes the
   clone's record automatically.
+- **Label tables are sorted, and that is what a new code needs.** All 79 shipped `.idi` tables are stored sorted
+  by (name length, name) — the engine binary-searches that order. Appending the clone's labels made `ka_02`
+  unresolvable, so the boot roster built a null car and halted at `ra 0x0031C8A8` on the intro → title
+  transition; `write_labels` now writes that order (all 79 ship files round-trip byte-identically) and a test looks
+  every code up with the engine's search. A clone also takes **one** row id across the 20 identity tables
+  (`GENERIC_CAR`, `ARCADEINFO_NORMAL`, `CAR_NAME_*`, `CAR_VARIATION_*`); before, Big5/Japanese resolved the code to
+  a different row.
+- **A listed clone now appears (in game).** `gt4-clone-record15.iso` (file SHA-256 `0f8b78d2…`) is the clone
+  written by `gt4_car_clone.py` with its generated `CARS/0000000000000436` and `ka_02` in the three car-list files:
+  the intro → title transition is clean, and Arcade → Single Race → World Circuits → Tsukuba → Car Selection → Ford
+  shows "Ford Ka '01 Clone" with the Ka model; the race load screen names Tsukuba Circuit and the clone. The race
+  start is the remaining check (a Nordschleife load is known to sit for minutes).
 - **Taking another car's record is not equivalent (in game).** An image that renamed the Eclipse's `CARS/…0435` to
   `…0436` and reused its slot booted, ran the attract mode, then crashed at `ra 0x0031C8A8` when leaving it — the
-  missing Eclipse record is the likely cause (High confidence). The proof image `gt4-clone-record2.iso`
-  (SHA-256 `69d924d2…`) keeps all 804 records and inserts the clone's through the split; its Ford page and race
-  are the remaining in-game check.
+  missing Eclipse record is the likely cause (High confidence).
 - **Menus read the name from the string DB.** Renaming `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" (with row 59's
   price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name is data.
 - **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American

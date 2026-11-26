@@ -3673,9 +3673,13 @@ in hex, about 1.2 KB each.
   unchanged file are controlled (`test_gt4_volume_write`), and `gt4_car_clone.py` now writes the clone's record.
 - **In game, taking another car's entry is not equivalent.** A cheaper image renamed the Eclipse's `CARS/…0435` to
   `…0436` and reused its slot: it booted and ran the attract mode, then crashed at `ra 0x0031C8A8` when leaving it
-  — the missing Eclipse record is the likely cause (High confidence). `gt4-clone-record2.iso` (SHA-256 `69d924d2…`)
-  keeps all 804 records, inserts the clone's record through the split, and is the image under test.
-- **To prove in game:** the `ka_02` clone (95 rows, its own name) with its generated CARS record and a
-  `ford_carlist` entry opens the Ford page, shows "Ford Ka `01 Clone" and races; the same image without the record
-  still crashes. Then the GT Mode dealer list.
+  — the missing Eclipse record is the likely cause (High confidence).
+- **The label order was the crash, not the record.** All 79 shipped `.idi` tables are stored sorted by (name length,
+  name) and the engine binary-searches them; the clone appended its labels, so `ka_02` resolved to no row and the
+  boot roster built a null car on the intro → title transition. `write_labels` now writes that order (every shipped
+  `.idi` round-trips byte-identically) and `plan_clone` gives a clone one row id across the 20 identity tables.
+- **In game with both fixes** (`gt4-clone-record15.iso`, file SHA-256 `0f8b78d2…`): the transition is clean, and
+  Arcade → Single Race → World Circuits → Tsukuba → Car Selection → Ford shows "Ford Ka '01 Clone" with the Ka model;
+  the race load screen reads "Tsukuba Circuit / Ford Ka '01 Clone". The race start is the remaining proof, then the
+  GT Mode dealer list.
 

@@ -80,6 +80,15 @@ def plan_clone(tables, code: str, new_code: str,
     for name, (labels, _) in tables.items():
         require(all(new_code not in label.name for label in labels),
                 "the new code already appears in " + name)
+    # The identity tables (a row named exactly the car code: GENERIC_CAR,
+    # CAR_NAME_*, CAR_VARIATION_*, ARCADEINFO_NORMAL) share one row-id space, and
+    # a car has the same id in every one of them (ka_01 is 59 everywhere). A clone
+    # must therefore take one id for all of them, or the engine resolves the code
+    # through another language's table to a row that has no CARS record.
+    identity = sorted(name for name, hits in found.items()
+                      if any(label == code for label, _, _ in hits))
+    shared_id = 1 + max([label.row_id for name in identity for label in tables[name][0]] +
+                        [row.row_id for name in identity for row in tables[name][1].rows])
     plan = {}
     for name, hits in sorted(found.items()):
         labels, table = tables[name]
@@ -87,7 +96,7 @@ def plan_clone(tables, code: str, new_code: str,
         if not picked:
             continue
         existing = {label.name for label in labels}
-        next_id = max(row.row_id for row in table.rows) + 1
+        next_id = shared_id if name in identity else max(row.row_id for row in table.rows) + 1
         entries = []
         for label, row_id, _ in picked:
             new_label = label.replace(code, new_code)
@@ -95,7 +104,8 @@ def plan_clone(tables, code: str, new_code: str,
             require(new_label not in existing, "the cloned label already exists: " + new_label)
             existing.add(new_label)
             entries.append((new_label, row_id, next_id))
-            next_id += 1
+            if name not in identity:
+                next_id += 1
         plan[name] = entries
     return plan
 
