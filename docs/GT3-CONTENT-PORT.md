@@ -166,6 +166,15 @@ Milestones: decode every `GT4_US2560` table (oracle: `ka_01` row 59 carries name
 a table back and reload it with identical rows; rebuild `GT4.VOL` with only that table
 changed; add one trim car and see it in the garage and in Arcade.
 
+**Where the roster comes from is still open** (2026-11-26, in game). The menus take the
+display name from the string DB — renaming `american_StrDB.sdb` string 84 to "Ford Ka ZZZ"
+makes the Arcade Ford list show that name — but not the membership: the clone's three
+added rows change neither the Arcade count (240 cars, Ford 5) nor the GT Mode dealer
+(eight Ford new cars, no clone). No `GT4_US2560` table carries 240 rows (`GENERIC_CAR`
+722, `CAR_NAME_american` 804, and `car/menu` holds 807 model files), so the list is
+compiled or built from a table not yet identified, and a row-level car add needs the
+executable half — the same Windows build the 24-car field waits on.
+
 ### B. Cars with new art — TASK-217
 
 The other eight need a GT4 car model, which the repository has only read at header

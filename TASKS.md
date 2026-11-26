@@ -3475,11 +3475,22 @@ First pipeline of the [GT3 content port](docs/GT3-CONTENT-PORT.md) (decision 007
   `CAR_VARIATION_american` go from 722 to 723 rows and `ARCADEINFO_NORMAL` from 721 to 722 (new row 1078, the donor's
   fields), yet the Arcade Ford list still reports five cars and never shows "Ford Ka `01 Clone". So the row write
   lands but no menu enumerates it: the list must come from a model, a code prefix or a compiled roster rather than
-  from these rows alone. The control (same screen on the shipped disc) was not captured, and the GT Mode dealer list
-  was not reached; both are the next check, and TASK-217 (car art/model) is the likely missing half anyway.
-- GT Mode is reachable with the test card: `card-gt.ps2`, a copy of `card-test.ps2`, holds a `BASCUS-97328GAMEDATA`
-  save; the game opens "Aa's Home" (Day 1, 10,000 cr, garage 0/0 cars). The dealer was not found on the map before
-  the session ended.
+  from these rows alone. The GT Mode dealer (below) does not list it either; TASK-217's real model is still the likely
+  missing half.
+- **Menus take the name from the string DB and the roster from elsewhere** (2026-11-26, Confirmed in game). Renaming
+  `american_StrDB.sdb` string 84 to "Ford Ka ZZZ" and setting `GENERIC_CAR` row 59's price to 17,040 makes the Arcade
+  Ford list show "Ford Ka ZZZ", so the display name is data. Membership is not: no `GT4_US2560` table has 240 rows
+  (`GENERIC_CAR` 722, `CAR_NAME_american` 804, `car/menu` 807 model files), and the three added rows changed neither
+  the Arcade count nor the dealer count. The roster is compiled or built from a table not yet identified, so adding a
+  car needs the executable half — the same build-side blocker as TASK-219's code half.
+- **A rebuilt table must carry its shipped GTDB version.** A probe script rebuilt `GENERIC_CAR` with the reader's
+  default (`0x00010000` instead of `0x00080001`); that image booted into the menus but the process exited during the
+  session (not isolated). `write_table(..., compressed=True)` now refuses any version outside `0x00080001`/`0x00080003`.
+- GT Mode dealer walked (2026-11-26) with `card-gt.ps2`, a copy of `card-test.ps2` holding a `BASCUS-97328GAMEDATA`
+  save ("Aa's Home", Day 1, 10,000 cr, garage 0/0): map → USA flag → American Showroom → Ford → New Cars lists eight
+  cars (Ka `01 at Cr. 12,920 first) and no clone. Path for the next run: title 40,13 → map (Up) → showroom grid
+  (Cadillac/Dodge/Plymouth, Chevrolet/Ford/Pontiac, Chrysler/—/Shelby) → Down → Ford → New Cars; Circle opens
+  Purchase, Triangle does not back out of the car page.
 - Scope note (2026-11-24): the three identity rows are not the whole car. The specifications live in the same table
   family on both discs — GT4 `GT4_US2560` holds 79 tables (`CHASSIS`, `ENGINE`, `GEAR`, `DRIVETRAIN`, `BRAKE`,
   `SUSPENSION`, `TIRESIZE`, `FRONTTIRE`, `REARTIRE`, `CLUTCH`, `FLYWHEEL`, `LSD`, `MUFFLER`, `WHEEL`,
@@ -3521,6 +3532,14 @@ slots, scenery), the road surface, the AI line and the start grid, plus the `<id
 row. Gates: byte-identical write back; substitute the road and scenery of one course with a converted GT3 circuit
 (Complex String first — pure geometry — then Rome Circuit); owner drives it. The six missing circuits are listed in
 the port document; the dirt and mountain ones come after the tarmac.
+- Container layer done (2026-11-26): `scripts/gt4_course.py` reads and writes the layout all 110 shipped `crs/`
+  courses share — a 64-entry little-endian offset table (0x100 bytes, slot 0 zero, slot 1 0x100, ascending,
+  0x80-aligned), then the tagged sections (`MDLS`, `Vls0`, `Tex1`, `REP4`, `Mot1`, `GTFX`, `BLBd`, `Env0`, `GTCM`,
+  `CRSS`, `GDGT`, `RNW4`, `CRPM`), each running to the next slot's offset, so trailing padding belongs to its
+  section. `read_settings` decodes the `CRSS` header: version 1, declared content length, four raw sub-block
+  offsets (`apricot`: 0x3F0 of content, offsets 0x28/0x2C/0x30/0x3C0, grid table with count 8 at 0x30).
+  Every course round-trips byte-identically. Controls: `tests/python/test_gt4_course.py`, six synthetic plus two
+  real-disc tests. Section contents stay opaque; next is one section's internal tables (start grid, road surface).
 
 ### TASK-219 — Larger starting field (📋 Planned, study, mod)
 

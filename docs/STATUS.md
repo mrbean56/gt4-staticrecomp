@@ -23,10 +23,23 @@ Ford Ka `01.
   image rebuilt with the dictionary writer) boots, reads the donor's specs correctly on the car screen, and races six
   cars at Tsukuba and Nordschleife with the HUD and no halt. Its rows land (`GENERIC_CAR` and `CAR_VARIATION_american`
   722 → 723, `ARCADEINFO_NORMAL` 721 → 722) yet the Arcade Ford list still reports five cars and shows no clone: the
-  menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), so the dealer
-  list is testable next; TASK-217's real model is the likely missing half.
-- Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`
-  (file SHA-256). The three earlier images are superseded. Details: `docs/GT4-LARGER-FIELD.md`.
+  menus do not enumerate that row. GT Mode does open on the test card (Day 1, 10,000 cr, garage 0/0), and the dealer
+  does not list it either (next bullet); TASK-217's real model is the likely missing half.
+- **Menus read the name from the string DB, the roster from code.** Renaming `american_StrDB.sdb` string 84 to
+  "Ford Ka ZZZ" (with row 59's price at 17,040) shows up as "Ford Ka ZZZ" in the Arcade Ford list — the display name
+  is data, unlike membership. No `GT4_US2560` table has the roster's 240 rows (`GENERIC_CAR` 722,
+  `CAR_NAME_american` 804, `car/menu` 807 model files), and neither the Arcade count (Ford 5) nor the GT Mode dealer
+  changed when the clone added rows. The roster is compiled or built from an unidentified table: both the car add and
+  the 24-car field now wait on the same Windows build.
+- **GT Mode dealer walks clean.** `card-gt.ps2` (a `BASCUS-97328GAMEDATA` save) opens "Aa's Home"; the American
+  Showroom → Ford → New Cars list shows eight cars (Ka `01 at Cr. 12,920 first) and no clone.
+- **TASK-218's container layer landed.** `scripts/gt4_course.py` reads and writes the layout all 110 shipped `crs/`
+  courses share (64-entry offset table, 0x80-aligned tagged sections, `CRSS` settings header) and every course
+  round-trips byte-identically; controls in `tests/python/test_gt4_course.py`.
+- `write_table(..., compressed=True)` now refuses a table whose version is not shipped (`0x00080001`/`0x00080003`): a
+  probe script that rebuilt `GENERIC_CAR` with the reader's default dropped the version silently.
+- Images: `gt4-race-control2.iso` `e94d2c1d…`, `gt4-field24b.iso` `15da5688…`, `gt4-field24c.iso` `72d77666…`,
+  `gt4-ka-probe2.iso` `e547448e…` (rename probe, file SHA-256). Details: `docs/GT4-LARGER-FIELD.md`.
 
 ## SpecDB: every table decodes, and a car is a label set (2026-11-24)
 

@@ -25,6 +25,7 @@ GTDB_MAGIC = b"GTDB"
 GTID_MAGIC = b"GTID"
 GTST_MAGIC = b"GTST"
 VERSION_UNCOMPRESSED = 0x00000001
+SHIPPED_VERSIONS = (0x00080001, 0x00080003)
 HEADER_SIZE = 16
 ROW_INFO_SIZE = 8
 PREFIX_BYTES = 256 * 2
@@ -355,6 +356,8 @@ def _write_compressed(table: Table) -> bytes:
     stream carries its symbol count in one byte, so rows longer than 254 bytes go into
     the block instead and each row copies its block entry (an index below 64).
     """
+    require(table.version in SHIPPED_VERSIONS,
+            "the compressed form must carry a shipped version")
     require(table.row_count == len(table.rows), "GTDB row count mismatch")
     require(0 <= table.row_count <= MAX_ROWS, "GTDB row count out of range")
     require(0 < table.row_length <= MAX_ROW_LENGTH, "GTDB row length out of range")

@@ -61,7 +61,7 @@ def compressed_table(row_ids, symbol_rows, row_length, codes, templates):
         streams.append(len(symbols))
         streams += encode(symbols, codes)
     header = struct.pack(
-        "<4sIII", b"GTDB", 0x00010000, len(row_ids), row_length
+        "<4sIII", b"GTDB", 0x00080001, len(row_ids), row_length
     )
     infos = b"".join(
         struct.pack("<II", row_id, offset)
@@ -184,11 +184,17 @@ class TableTests(unittest.TestCase):
 
     def test_compressed_write_places_long_rows_in_the_block(self):
         rows = [specdb.Row(50 + index, bytes([index]) * 480) for index in range(3)]
-        table = specdb.Table(3, 480, True, rows)
+        table = specdb.Table(3, 480, True, rows, version=0x00080001)
         parsed = specdb.parse_table(specdb.write_table(table, compressed=True))
         self.assertEqual([row.data for row in parsed.rows], [row.data for row in rows])
         with self.assertRaises(specdb.SpecDbError):
-            specdb.write_table(specdb.Table(65, 480, True, rows * 22), compressed=True)
+            specdb.write_table(specdb.Table(65, 480, True, rows * 22, version=0x00080001),
+                               compressed=True)
+
+    def test_compressed_write_refuses_a_non_shipped_version(self):
+        table = specdb.Table(1, 4, True, [specdb.Row(1, b"\x01\x02\x03\x04")])
+        with self.assertRaises(specdb.SpecDbError):
+            specdb.write_table(table, compressed=True)
 
     def test_bad_magic(self):
         data = bytearray(self.data)

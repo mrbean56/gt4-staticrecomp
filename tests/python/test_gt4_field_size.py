@@ -20,7 +20,7 @@ def table_of(sizes: list[int]) -> specdb.Table:
     rows = [specdb.Row(1000 + index, bytes([0x11]) * 0x3E + bytes([size]) + bytes([0x22]) * 8)
             for index, size in enumerate(sizes)]
     return specdb.Table(row_count=len(rows), row_length=0x3E + 1 + 8, compressed=False,
-                        rows=rows)
+                        rows=rows, version=0x00080001)
 
 
 class RaiseTests(unittest.TestCase):
