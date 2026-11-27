@@ -3598,6 +3598,25 @@ the port document; the dirt and mountain ones come after the tarmac.
   space (first two on the racing line, the rest 40-190 m off and 5-36 m up); it is not a start grid — counts are never
   6 and a course and its reverse twin are byte-identical. Section bodies stay opaque; next is one `MDLS`/`Vls0`
   section and the road surface.
+- **A course is its container plus its race data (2026-11-26, Confirmed in game).** `gt4-course-swap.iso` (file
+  SHA-256 `65c6055c…`) replaces `crs/tsukuba` and `crs/tsukuba.ad` with `crs/deepforest` and `crs/deepforest.ad`,
+  nothing else: the entry screen still reads "Tsukuba Circuit" and the race runs on Deep Forest's world (trees,
+  tunnel, farmhouse, its map inset) at frames 20,500/21,500. The menu name, event and entry list are specdb
+  `COURSE`/`RACE` rows, so a ported GT3 circuit is a `crs/<id>` container, an `<id>.ad`, a `COURSE` row and a
+  menu entry. Geometry conversion is the remaining hard part.
+- **The volume grows for new entries (2026-11-26).** The shipped volume has 446,424 B free, while one course is
+  ~3.8 MB compressed; the image has 2.6 GB that no file covers (filesystem ends at 2,697,330,688 B, every file by
+  2,676,342,784 B). `scripts/gt4_iso_grow.py` grows `GT4.VOL` forward and moves the two ISO9660 fields that
+  describe it (`/GT4.VOL;1` record length, primary volume descriptor space size, both byte orders), with the
+  writer's `tail_zeros` filling the new tail. Eight controls in `tests/python/test_gt4_iso_grow.py` (real disc);
+  The primary volume descriptor's volume space size must stay: the runtime derives the disc's second layer
+  from it (`layer 1 at 1317040`; patched, the image booted black with `145 files, layer 1 at 0`). So the
+  volume may grow only inside the filesystem's free tail, 20,987,904 B (about five compressed courses);
+  more needs the second layer understood.
+  `gt4-grow-clone.iso` (file SHA-256 `cc5002b0…`, 16 MiB grow) puts the clone's `CARS` record at
+  2,462,928,896, 3,426,304 B past the shipped end; **in game** the Ford page and the Tsukuba entry list
+  read "Ford Ka '01 Clone" and the race starts (frames 15,500, 19,500, 20,500), so entries in the grown
+  region are read.
 
 ### TASK-219 — Larger starting field (📋 Planned, study, mod)
 

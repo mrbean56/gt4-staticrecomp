@@ -76,9 +76,14 @@ What the encoder does not recompute, and why:
 
 Payloads are laid out in their original order at page-aligned offsets, keeping the
 shipped offset when it is still free; a grown entry pushes the entries after it.
-The volume keeps its shipped extent: a layout that would not fit is refused. A
-moved entry leaves its shipped bytes in an unreferenced gap, so a rebuilt volume
-can hold stale copies of replaced payloads.
+The volume keeps its shipped extent unless the caller grows it: a layout that would
+not fit is refused. `scripts/gt4_iso_grow.py` grows `GT4.VOL` inside the disc image
+by moving `/GT4.VOL;1`'s directory record length, for up to the 20,987,904 B the
+filesystem has free past the volume end. The primary volume descriptor's volume
+space size must stay: the runtime reads the second layer from it, and a moved field
+gives a black boot (`145 files, layer 1 at 0`). A moved entry leaves its shipped
+bytes in an unreferenced gap, so a rebuilt volume can hold stale copies of replaced
+payloads.
 
 Evidence (TASK-216 milestone A3, 2026-11-24): the uncompressed
 `specdb/GT4_US2560/GENERIC_CAR.dbt` is 23,120 decoded bytes where the shipped entry
@@ -88,9 +93,10 @@ decoded cap and are compared stored), the replaced entry decodes to the new tabl
 and `gt4_specdb.parse_table` reads 722 rows of 24 bytes with row 59
 `b00a00002400000078320000d107030d0d00000000000000`. Its stored size shrank
 11,743 -> 8,984, so no other entry's offset moved; relocation is covered by
-synthetic controls. Whether the game accepts the rebuilt image, and a catalogue
-whose stored page sizes differ from the shipped ones, remains **Unknown** until
-the owner runs it.
+synthetic controls. The game accepts rebuilt images, resized entries and added
+entries (Confirmed in game, 2026-11-26: the clone images race with their added
+`CARS` records, and a 16 MiB grown volume reads a record stored 3,426,304 B past the
+shipped end).
 
 ## Usage
 

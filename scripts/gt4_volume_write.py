@@ -781,8 +781,13 @@ def hash_region(stream, offset: int, length: int, limit: int) -> str:
     return hasher.hexdigest()
 
 
-def write_plan(stream, output, plan: Plan, origin: int, volume_size: int) -> Report:
-    """Write one planned volume region, at ``origin`` in the source."""
+def write_plan(stream, output, plan: Plan, origin: int, volume_size: int,
+               tail_zeros: bool = False) -> Report:
+    """Write one planned volume region, at ``origin`` in the source.
+
+    ``tail_zeros`` fills the unused tail with zeros instead of the source's bytes;
+    a grown volume has no source there (``scripts/gt4_iso_grow.py``).
+    """
     limit = origin + volume_size
     catalogue = plan.catalogue
     written = hashlib.sha256()
@@ -809,7 +814,15 @@ def write_plan(stream, output, plan: Plan, origin: int, volume_size: int) -> Rep
                        limit, written)
         position = entry.offset + entry.stored_size
     if position < volume_size:
-        copy_range(stream, output, origin + position, volume_size - position, limit, written)
+        if tail_zeros:
+            remaining = volume_size - position
+            while remaining:
+                step = min(remaining, CHUNK_BYTES)
+                emit(bytes(step))
+                remaining -= step
+        else:
+            copy_range(stream, output, origin + position, volume_size - position, limit,
+                       written)
     source_sha256 = hash_region(stream, origin, volume_size, limit)
     written_sha256 = written.hexdigest()
     return Report(volume_size, catalogue.stored_sha256, catalogue.decoded_sha256,

@@ -219,6 +219,21 @@ undecoded form and are kept verbatim. Section bodies (`MDLS`, `Vls0`, `Tex1`, �
 opaque, and the `CRSS` content is only partly named: a record index at +0x20/+0x24, four
 sub-block offsets, world-space points that do not depend on race direction.
 
+What a course is, confirmed in game (2026-11-26): `gt4-course-swap.iso` replaces
+`crs/tsukuba` and `crs/tsukuba.ad` with Deep Forest's two entries and nothing else; the
+entry screen still says "Tsukuba Circuit" and the race runs on Deep Forest's world. The
+menu name, event and entry list are specdb rows, so a ported circuit is a `crs/<id>`
+container, an `<id>.ad`, a `COURSE` row and a menu entry.
+
+Where a new entry fits (2026-11-26): the shipped volume has 446,424 B free after its last
+entry, and the disc image has 20,987,904 B of filesystem space past the volume end. The
+volume grows into it with `scripts/gt4_iso_grow.py`, which patches `/GT4.VOL;1`'s directory
+record length; the primary volume descriptor's volume space size must stay, because the
+runtime reads the disc's second layer from it (patched, the image boots black with `145
+files, layer 1 at 0`). A 16 MiB-grown volume is confirmed in game: the clone's `CARS`
+record, 3,426,304 B past the shipped end, still names the car and starts the race. That
+tail fits roughly five compressed courses; more needs the second layer understood.
+
 ### D. Features — TASK-219
 
 Bigger fields are an engine change (grid slots, opponent spawn, HUD position list,
@@ -245,7 +260,8 @@ repository ships tooling and the conversion code, never assets from either disc.
   leaves the car visible but the race load never completes, and the four `DEFAULT_PARTS`
   rows alone reproduce it (Confirmed in game 2026-11-26), so the default plan is the
   supported one.
-- Whether a `GT4.VOL` rebuilt with changed sizes loads at all (Unknown; milestone A3).
+- Whether a `GT4.VOL` rebuilt with changed sizes loads at all. Answered (2026-11-26): rebuilt
+  volumes with resized and added entries boot, and the clone images race in Arcade (TASK-216).
 - GT4 geometry, texture and relocation semantics (Unknown; slices 121–124 stop at
   headers).
 - GT4 course section bodies (`MDLS`, `Vls0`, `Tex1`, …) are still Unknown; the container

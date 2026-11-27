@@ -1,5 +1,28 @@
 # Current Status
 
+## In game: a course is its container, and GT4.VOL can grow (2026-11-26)
+
+TASK-218, third in-game session on Bilboquet (1.3.0-rc16, the owner's disc, `card-blank.ps2`).
+
+- **A course is `crs/<id>` plus `crs/<id>.ad`.** `gt4-course-swap.iso` (file SHA-256 `65c6055c…`) puts Deep
+  Forest's container and race data in Tsukuba's two catalogue entries and changes nothing else: the entry
+  screen still reads "Tsukuba Circuit" and the race runs on Deep Forest's world (trees, tunnel, farmhouse, its
+  map inset) at frames 20,500 and 21,500. The menu name, event and entry list are specdb rows, so a ported GT3
+  circuit is a `crs/<id>` container, an `<id>.ad`, a `COURSE` row and a menu entry; geometry conversion is the
+  remaining problem.
+- **The volume grows, but only inside the filesystem's free tail.** The shipped volume leaves 446,424 B after
+  its last entry and the image has 20,987,904 B of filesystem space past the volume end.
+  `scripts/gt4_iso_grow.py` grows `GT4.VOL` and moves `/GT4.VOL;1`'s directory record length. The primary
+  volume descriptor's volume space size must stay: the runtime reads the disc's second layer from it, and a
+  moved field boots black (`145 files, layer 1 at 0`). The tail fits roughly five compressed courses.
+- **The game reads entries in the grown region.** `gt4-grow-clone.iso` (file SHA-256 `cc5002b0…`, 16 MiB grow)
+  appends a probe course and then the racing clone's `CARS` record, which lands 3,426,304 B past the shipped
+  end; the Ford page reads "Ford Ka '01 Clone" (frame 15,500), the Tsukuba entry list carries it at position 6
+  (19,500) and the race starts (20,500).
+- Controls: `tests/python/test_gt4_iso_grow.py`, 8 tests on the real disc; suite 203/203 (5 skipped).
+- Open: the road surface and one full `MDLS`/`Vls0` section, and whether the filesystem can be extended past
+  the second-layer boundary for more than ~5 courses.
+
 ## In game: a cloned car appears and races (2026-11-26)
 
 TASK-216, second in-game session on Bilboquet (1.3.0-rc16, the owner's disc, `card-blank.ps2`, Tsukuba).
