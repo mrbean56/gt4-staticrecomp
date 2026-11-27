@@ -130,10 +130,11 @@ class VolumeTests(unittest.TestCase):
             volume.parse_catalogue(b"x" * (volume.CATALOGUE_CAP + 1), volume.VOLUME_SIZE)
 
     def test_aggregate_input_and_output_caps(self):
+        count = volume.TOTAL_CAP // volume.FILE_CAP + 1
         for stored, size in ((volume.FILE_CAP, 0), (0, volume.FILE_CAP)):
             files = {str(index): volume.Record(1, str(index), 1, stored_size=stored, size=size)
-                     for index in range(3)}
-            catalogue = volume.Catalogue(files, 1, 1, 3, "", "")
+                     for index in range(count)}
+            catalogue = volume.Catalogue(files, 1, 1, count, "", "")
             with self.assertRaisesRegex(ValueError, "total selection cap"):
                 volume.selected_records(catalogue, list(files))
 

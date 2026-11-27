@@ -3677,6 +3677,13 @@ read path.
   frame comparison matches, owner test. Normal installs keep the linked image (decision 0075).
 - Licensing: the extracted folder is the owner's own data. It is never committed, never put in an installer and never
   published; the repository ships only the extraction tooling and the overlay.
+- **The volume unpacks to a working tree (2026-11-26).** `scripts/gt4_volume_folder.py` extracts all 18,352
+  GT4.VOL entries (3,795,832,691 decoded bytes) under ignored `private/disc-tree/` with a manifest, reports the
+  files whose hash moved, and rebuilds an image from the tree sending back only those files. An untouched
+  rebuild is byte-identical to the pinned disc (SHA-256 `67b6c007…824f`); six controls in
+  `tests/python/test_gt4_volume_folder.py`. The per-file cap rose to 64 MiB (a 44 MB narration entry) and the
+  reader's aggregate cap to 256 MiB. This is the offline half of running from a folder: the game still needs
+  an ISO or the runtime overlay.
 - State (2026-11-24): the extraction half is done — `scripts/gt4_disc_extract.py` writes the pinned disc as a folder
   (136 files, 2,675,322,996 B, half the image) and verifies the three ISO pins plus the `GT4.VOL` extent
   (`49f1a67a…`); seven controls in `tests/python/test_gt4_disc_extract.py`. The runtime overlay is not started: it needs

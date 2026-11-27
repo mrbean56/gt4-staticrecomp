@@ -1,5 +1,16 @@
 # Current Status
 
+## Working from an extracted tree (2026-11-26)
+
+`scripts/gt4_volume_folder.py` unpacks GT4.VOL into a working tree and packs it back:
+`extract` writes all 18,352 entries as files (3,795,832,691 decoded bytes) plus a manifest of kind,
+size and SHA-256, `status` lists the files whose hash moved, and `rebuild` writes an image sending
+back only those files. An untouched rebuild is **byte-identical to the pinned disc** (SHA-256
+`67b6c007…824f`), so experiments are file edits and the ISO is only rebuilt for an in-game run. Six
+controls in `tests/python/test_gt4_volume_folder.py`; the per-file cap is now 64 MiB (one narration
+`.ads` decodes to 44,355,624 bytes) and the reader's aggregate cap 256 MiB. The tree lives under
+ignored `private/disc-tree/` — it is the owner's game data, and the repository ships only the tooling.
+
 ## In game: a course is its container, and GT4.VOL can grow (2026-11-26)
 
 TASK-218, third in-game session on Bilboquet (1.3.0-rc16, the owner's disc, `card-blank.ps2`).

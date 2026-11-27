@@ -18,8 +18,8 @@ Non-final ToC segments accept the pinned flush suffix after bounded raw DEFLATE,
 then XOR decoded bytes by `0x55`; full DEFLATE grammar/producer flush policy
 are not qualified. See [primary sources](NENKAI-REFERENCES.md).
 
-Extraction requires explicit catalogue paths: eight maximum, 16 MiB per file
-and 32 MiB aggregate, for both stored and decoded data. All selected extents
+Extraction requires explicit catalogue paths: eight maximum, 64 MiB per file
+and 256 MiB aggregate, for both stored and decoded data. All selected extents
 and payloads pass before output creation. Kind 1 supports exact-length raw data,
 rejecting PS2ZIP markers as unqualified. Kind 2 supports PS2ZIP only: matching
 size complement, bounded raw DEFLATE, exact output size, EOF and no trailing
@@ -48,10 +48,10 @@ python3 scripts/gt4_volume_write.py --iso gt4.iso --output rebuilt.iso \
 ```
 
 The replacement file holds the entry's decoded payload bytes, of any length up to
-16 MiB. It is re-framed with the entry's own kind (raw run, or PS2ZIP: magic, size
-complement, raw DEFLATE). An unchanged payload keeps its shipped stored bytes, so
-a rewrite that changes nothing reproduces the 2,459,502,592-byte region byte for
-byte (SHA-256 `49f1a67a...3688e1c`).
+64 MiB (one narration `.ads` decodes to 44 MB). It is re-framed with the entry's own
+kind (raw run, or PS2ZIP: magic, size complement, raw DEFLATE). An unchanged payload
+keeps its shipped stored bytes, so a rewrite that changes nothing reproduces the
+2,459,502,592-byte region byte for byte (SHA-256 `49f1a67a...3688e1c`).
 
 The catalogue is written from its decoded pages: the 64-byte header with the new
 stored size, the XOR-encoded page offset table, and every page's header, entry
@@ -97,6 +97,31 @@ synthetic controls. The game accepts rebuilt images, resized entries and added
 entries (Confirmed in game, 2026-11-26: the clone images race with their added
 `CARS` records, and a 16 MiB grown volume reads a record stored 3,426,304 B past the
 shipped end).
+
+## Folder tree
+
+`scripts/gt4_volume_folder.py` treats the volume as a working tree, so a change is a
+file edit rather than a catalogue byte patch:
+
+```bash
+python3 scripts/gt4_volume_folder.py extract gt4.iso private/disc-tree
+python3 scripts/gt4_volume_folder.py status private/disc-tree
+python3 scripts/gt4_volume_folder.py rebuild gt4.iso private/disc-tree rebuilt.iso
+```
+
+Extraction writes every entry's decoded payload at its catalogue path plus
+`manifest.json` (kind, decoded size, SHA-256, volume extent); it refuses a folder that
+already holds a manifest and any unsafe path. `rebuild` sends back only the files whose
+hash moved, so unchanged entries keep their shipped stored bytes, and `--grow-mb` grows
+the volume as `gt4_iso_grow.py` does.
+
+Evidence (2026-11-26, the owner's disc): 18,352 entries extracted to 3,795,832,691
+decoded bytes in 50 s, and rebuilding that untouched tree reproduces the image
+byte for byte (SHA-256 `67b6c007…824f`, the pinned disc). Six controls in
+`tests/python/test_gt4_volume_folder.py`.
+
+The tree is the owner's own game data: it lives under ignored `private/`, never in a
+commit, an installer or a release.
 
 ## Usage
 
